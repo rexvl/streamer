@@ -137,6 +137,10 @@ struct MediaOutput {
             return false;
         }
 
+        if (!gst_element_add_pad(output_bin, sink_ghost)) {
+            return false;
+        }
+
         GstPadLinkReturn ret = gst_pad_link(atee_src_pad, sink_ghost);
         if (ret != GST_PAD_LINK_OK) {
             printf("failed to connect audio_tee to audio_queue");

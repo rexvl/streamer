@@ -33,13 +33,23 @@ struct VideoSource {
         g_object_set(enc,
             "bitrate", 1000,
             NULL); 
-/*
+
+        gst_util_set_object_arg(
+            G_OBJECT(enc),
+            "speed-preset",
+            "ultrafast"
+        );
+
+        gst_util_set_object_arg(
+            G_OBJECT(enc),
+            "tune",
+            "zerolatency"
+        );
+
         g_object_set(enc,
-            "bitrate", 1000,
-            "speed-preset", "ultrafast",
-            "tune", "zerolatency",
+            "key-int-max", 60,
             NULL);
-*/
+
         GstElement* parser = gst_element_factory_make("h264parse", NULL);
         if (!parser) {
             return false;

@@ -5,7 +5,7 @@ struct MediaStream {
     GstBus *bus{nullptr};
     std::unique_ptr<VideoSource> video;
     std::unique_ptr<AudioSource> audio;
-    std::map<std::string, MediaOutput> outputs;
+    std::map<std::string, std::unique_ptr<MediaOutput>> outputs;
 
     bool create() {
         pipeline = gst_pipeline_new(nullptr);
@@ -21,9 +21,9 @@ struct MediaStream {
         return true;
     }
     
-    void start() {
+    bool start() {
         auto status =  gst_element_set_state(GST_ELEMENT(pipeline), GST_STATE_PLAYING);
-        return;
+        return status != GST_STATE_CHANGE_FAILURE;
     }
 
     bool addVideo(const VideoSettings& settings, GstDevice* device) {
@@ -53,24 +53,24 @@ struct MediaStream {
     }
 
     bool addOutput(const std::string& id, const OutputSettings& settings) {
-        MediaOutput output(pipeline, settings);
-        if (!output.create()) {
+        auto output = std::make_unique<MediaOutput>(pipeline, settings);
+        if (!output->create()) {
             return false;
         }
 
         if (video) {
-            if (!output.addVideo(video->video_tee)) {
+            if (!output->addVideo(video->video_tee)) {
                 return false;
             }
         }
 
         if (audio) {
-            if (!output.addAudio(audio->audio_tee)) {
+            if (!output->addAudio(audio->audio_tee)) {
                 return false;
             }
         }
 
-        outputs.emplace(id, output);
+        outputs.emplace(id, std::move(output));
         return true;
     }
     
@@ -121,7 +121,7 @@ struct MediaStream {
         for (auto& it : outputs) {
             auto& output = it.second;
 
-            if (output.output_bin == src) {
+            if (output->output_bin == src) {
                 printf("output:%s failed\n", it.first.c_str());
                 return false;
             }
@@ -131,7 +131,7 @@ struct MediaStream {
     }
 
     bool ProcessMessage() {
-        GstMessage* msg = gst_bus_timed_pop_filtered(bus, 100 * GST_MSECOND, static_cast<GstMessageType>(GST_MESSAGE_INFO | GST_MESSAGE_ERROR | GST_MESSAGE_EOS | GST_MESSAGE_STATE_CHANGED));
+        GstMessage* msg = gst_bus_pop_filtered(bus, static_cast<GstMessageType>(GST_MESSAGE_INFO | GST_MESSAGE_ERROR | GST_MESSAGE_EOS | GST_MESSAGE_STATE_CHANGED));
         if (!msg) {
             return true;
         }

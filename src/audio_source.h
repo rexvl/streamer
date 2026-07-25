@@ -25,6 +25,11 @@ struct AudioSource {
             return false;
         }
 
+        GstElement* audioconvert = gst_element_factory_make("audioconvert", NULL);
+        if (!audioconvert) {
+            return false;
+        }
+
         GstElement* enc = gst_element_factory_make("voaacenc", NULL);
         if (!enc) {
             return false;
@@ -39,8 +44,8 @@ struct AudioSource {
             return false;
         }
 
-        gst_bin_add_many(GST_BIN(audio_bin), capture, enc, parser, NULL);
-        if (!gst_element_link_many(capture, enc, parser, NULL)) {
+        gst_bin_add_many(GST_BIN(audio_bin), capture, audioconvert, enc, parser, NULL);
+        if (!gst_element_link_many(capture, audioconvert, enc, parser, NULL)) {
             return false;
         }
 

@@ -260,7 +260,9 @@ int main() {
                     continue;
                 }
 
-                media_stream->start();
+                if (!media_stream->start()) {
+                    return false;
+                }
 
                 printf("started stream=%s\n", ns_it.first.c_str());
 

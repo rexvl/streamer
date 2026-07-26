@@ -8,11 +8,54 @@
 
 <body>
 
-<h1>Stream Manager</h1>
+<div class="content">
 
-<button onclick="loadStreams()">
-    Refresh
-</button>
+    <div class="page-header">
+        <h1>Stream Manager</h1>
+
+        <button onclick="loadStreams()" class="btn">Refresh</button>
+    </div>
+
+    <section id="new-stream-section">
+    <h2>Create new stream</h2>
+    <form id="new-stream-form" class="form" onsubmit="event.preventDefault(); createStream();">
+        <div class="form-row">
+            <label class="form-label">Video</label>
+            <select id="video-select" class="form-control">
+                <option value="">(none)</option>
+            </select>
+        </div>
+
+        <div class="form-row">
+            <label class="form-label">Audio</label>
+            <select id="audio-select" class="form-control">
+                <option value="">(none)</option>
+            </select>
+        </div>
+
+        <div class="form-row">
+            <label class="form-label">Outputs</label>
+            <div id="outputs-container" class="outputs-list">
+                <div class="output-row">
+                    <select class="output-type">
+                        <option value="rtsp">RTSP</option>
+                        <option value="rtmp">RTMP</option>
+                    </select>
+                    <input class="output-url" type="text" placeholder="url (e.g. rtmp://...)">
+                    <button type="button" class="btn small" onclick="removeOutputRow(this)">Remove</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div></div>
+            <div>
+                <button type="button" class="btn" onclick="addOutputRow()">Add output</button>
+                <button type="submit" class="btn primary">Create stream</button>
+            </div>
+        </div>
+    </form>
+</section>
 
 <table>
     <thead>
@@ -29,6 +72,7 @@
     </tbody>
 </table>
 
+</div>
 
 <script src="app.js"></script>
 

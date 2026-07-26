@@ -14,6 +14,7 @@
 #include <audio_source.h>
 #include <media_output.h>
 #include <media_stream.h>
+#include <http_server.h>
 
 #include <windows.h> // SetConsoleOutputCP
 
@@ -33,6 +34,9 @@ int main() {
 
     gst_init(nullptr, nullptr);
 
+    HttpServer http_server;
+    http_server.start();
+
     GstDeviceMonitor* dev_monitor = gst_device_monitor_new();
     gst_device_monitor_add_filter(dev_monitor, "Video/Source", NULL);
     gst_device_monitor_add_filter(dev_monitor, "Audio/Source", NULL);
@@ -45,16 +49,6 @@ int main() {
     std::chrono::steady_clock::time_point last_sync = std::chrono::steady_clock::now();
 
     std::map<std::string, std::unique_ptr<MediaStream>> cur_streams;
-
-    enum class Type { Video, Audio };
-
-    struct DeviceInfo {
-        std::string name;
-        GstDevice* device{nullptr};
-        Type type;
-    };
-
-    std::map<std::string, DeviceInfo> devices;
 
     bool running = true;
     while (running) {
@@ -77,26 +71,14 @@ int main() {
                         name = gst_device_get_display_name(device);
                         if (id && name) {
                             printf("video device added: %s id=%s\n", name, id);
-
-                            DeviceInfo di;
-                            di.device = device;
-                            di.name   = name;
-                            di.type   = Type::Video;
-
-                            devices[id] = std::move(di);
+                            ConfigManager::getInstance().addVideoDevice(id, name, device);
                         }
                     } else if (!strcmp(klass, "Audio/Source")) {
                         id = get_device_id(props);
                         name = gst_device_get_display_name(device);
                         if (id && name) {
                             printf("audio device added: %s id=%s\n", name, id);
-
-                            DeviceInfo di;
-                            di.device = device;
-                            di.name   = name;
-                            di.type = Type::Audio;
-
-                            devices[id] = std::move(di);
+                            ConfigManager::getInstance().addAudioDevice(id, name, device);
                         }
                     }
 
@@ -119,14 +101,14 @@ int main() {
                         name = gst_device_get_display_name(device);
                         if (id && name) {
                             printf("video device removed: %s id=%s\n", name, id);
-                            devices.erase(id);
+                            ConfigManager::getInstance().removeVideoDevice(id);
                         }
                     } else if (!strcmp(klass, "Audio/Source")) { 
                         id = get_device_id(props);
                         name = gst_device_get_display_name(device);
                         if (id && name) {
                             printf("audio device removed: %s id=%s\n", name, id);
-                            devices.erase(id);
+                            ConfigManager::getInstance().removeAudioDevice(id);
                         }
                     }
                 }
@@ -174,8 +156,8 @@ int main() {
                 auto& media_stream = cs_it->second;
 
                 if (settings.video) {
-                    auto device_it = devices.find(settings.video->device);
-                    if (device_it != devices.end()) {
+                    auto deivce = ConfigManager::getInstance().getVideoDevice(settings.video->device);
+                    if (deivce) {
                         if (media_stream->video && media_stream->video->settings != *settings.video) {
                             if (!media_stream->removeVideo()) {
                                 cs_it = cur_streams.erase(cs_it);
@@ -184,7 +166,7 @@ int main() {
                         }
 
                         if (!media_stream->video) {
-                            if (!media_stream->addVideo(*settings.video, device_it->second.device)) {
+                            if (!media_stream->addVideo(*settings.video, deivce)) {
                                 cs_it = cur_streams.erase(cs_it);
                                 continue;
                             }
@@ -198,8 +180,8 @@ int main() {
                 }
 
                 if (settings.audio) {
-                    auto device_it = devices.find(settings.audio->device);
-                    if (device_it != devices.end()) {
+                    auto deivce = ConfigManager::getInstance().getVideoDevice(settings.audio->device);
+                    if (deivce) {
                         if (media_stream->audio && media_stream->audio->settings != *settings.audio) {
                             if (!media_stream->removeAudio()) {
                                 cs_it = cur_streams.erase(cs_it);
@@ -208,7 +190,7 @@ int main() {
                         }
 
                         if (!media_stream->audio) {
-                            if (!media_stream->addAudio(*settings.audio, device_it->second.device)) {
+                            if (!media_stream->addAudio(*settings.audio, deivce)) {
                                 cs_it = cur_streams.erase(cs_it);
                                 continue;
                             }
@@ -239,18 +221,18 @@ int main() {
                 }
 
                 if (settings.video) {
-                    auto device_it = devices.find(settings.video->device);
-                    if (device_it != devices.end()) {
-                        if (!media_stream->addVideo(*settings.video, device_it->second.device)) {
+                    auto deivce = ConfigManager::getInstance().getVideoDevice(settings.video->device);
+                    if (deivce) {
+                        if (!media_stream->addVideo(*settings.video, deivce)) {
                             continue;
                         }
                     }
                 }
 
                 if (settings.audio) {
-                    auto device_it = devices.find(settings.audio->device);
-                    if (device_it != devices.end()) {
-                        if (!media_stream->addAudio(*settings.audio, device_it->second.device)) {
+                    auto deivce = ConfigManager::getInstance().getAudioDevice(settings.audio->device);
+                    if (deivce) {
+                        if (!media_stream->addAudio(*settings.audio, deivce)) {
                             continue;
                         }
                     }
@@ -270,6 +252,8 @@ int main() {
             }
         }
     }
+
+    http_server.stop();
 
     gst_device_monitor_stop(dev_monitor);
 

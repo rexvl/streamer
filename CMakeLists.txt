@@ -16,7 +16,18 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(json)
 
-target_include_directories(streamer PRIVATE "src")
+FetchContent_Declare(
+    httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.18.3
+)
+
+FetchContent_MakeAvailable(httplib)
+
+target_include_directories(streamer PRIVATE
+    "src"
+    ${httplib_SOURCE_DIR}
+)
 
 set(GST_ROOT $ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64})
 
@@ -41,6 +52,7 @@ target_link_libraries(streamer PRIVATE
     gstreamer-1.0
     gobject-2.0
     glib-2.0
+    ws2_32
     # Add optional sub-libraries here as needed:
     # gstapp-1.0
     # gstvideo-1.0

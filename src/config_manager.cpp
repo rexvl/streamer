@@ -1,79 +1,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <config_manager.h>
-
-void from_json(const nlohmann::json& j, VideoSettings::Codec& c) {
-    std::string s = j.get<std::string>();
-
-    if (s == "avc")
-        c = VideoSettings::Codec::AVC;
-    else if (s == "hevc")
-        c = VideoSettings::Codec::HEVC;
-    else
-        throw std::runtime_error("Unknown output type: " + s);
-}
-
-void from_json(const nlohmann::json& j, AudioSettings::Codec& c) {
-    std::string s = j.get<std::string>();
-
-    if (s == "aac")
-        c = AudioSettings::Codec::AAC;
-    else
-        throw std::runtime_error("Unknown output type: " + s);
-}
-
-void from_json(const nlohmann::json& j, VideoSettings& c) {
-    j.at("device").get_to(c.device);
-
-    c.width = j.value("whidth", 0);
-    c.height = j.value("height", 0);
-    c.fps_n = j.value("fps_n", 0);
-    c.fps_d = j.value("fps_d", 1);
-
-    j.at("codec").get_to(c.codec);
-    c.bitrate = j.value("bitrate", 0);
-}
-
-void from_json(const nlohmann::json& j, AudioSettings& c) {
-    j.at("device").get_to(c.device);
-
-    c.sampleRate = j.value("sampleRate", 0);
-    c.channel_count = j.value("channels", 0);
-
-    j.at("codec").get_to(c.codec);
-    c.bitrate = j.value("bitrate", 0);
-}
-
-void from_json(const nlohmann::json& j, OutputSettings::Type& type) {
-    std::string s = j.get<std::string>();
-
-    if (s == "rtmp")
-        type = OutputSettings::Type::RTMP;
-    else if (s == "rtsp")
-        type = OutputSettings::Type::RTSP;
-    else
-        throw std::runtime_error("Unknown output type: " + s);
-}
-
-void from_json(const nlohmann::json& j, OutputSettings& c) {
-    j.at("type").get_to(c.type);
-    j.at("url").get_to(c.url);
-}
-
-void from_json(const nlohmann::json& j, StreamSettings& c) {
-
-    if (j.contains("video")) {
-        c.video = std::make_shared<VideoSettings>();
-        j.at("video").get_to(*c.video);
-    }
-
-    if (j.contains("audio")) {
-        c.audio = std::make_shared<AudioSettings>();
-        j.at("audio").get_to(*c.audio);
-    }
-
-    j.at("outputs").get_to(c.outputs);
-}
+#include <json_serialization.h>
 
 ConfigManager& ConfigManager::getInstance() {
     static ConfigManager instance;
@@ -87,13 +15,96 @@ void ConfigManager::load() {
     config_if >> config;
 
     if (!config.contains("streams")) {
+        std::lock_guard<std::mutex> lock(mutex_);
         streams_.clear();
         return;
     }
 
-    config.at("streams").get_to(streams_);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        config.at("streams").get_to(streams_);
+        next_stream_id_ = streams_.size();
+    }
 }
 
 void ConfigManager::getStreams(std::map<std::string, StreamSettings>& streams) {
+    std::lock_guard<std::mutex> lock(mutex_);
     streams = streams_;
+}
+
+bool ConfigManager::getStream(StreamSettings& stream, const std::string& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = streams_.find(id);
+    if (it != streams_.end()) {
+        stream = it->second;
+        return true;
+    }
+    return false;
+}
+
+std::string ConfigManager::addStream(StreamSettings& settings) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    settings.id = std::to_string(next_stream_id_++);
+    streams_[settings.id] = settings;
+    return settings.id;
+}
+
+bool ConfigManager::removeStream(const std::string& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = streams_.find(id);
+    if (it != streams_.end()) {
+        streams_.erase(it);
+        return true;
+    }
+
+    return false;
+}
+
+void ConfigManager::addVideoDevice(const std::string& id, const std::string& name, GstDevice* device) {
+    auto di = std::make_shared<DeviceInfo>(name, device);
+    std::lock_guard<std::mutex> lock(mutex_);
+    video_devices_[id] = std::move(di);
+}
+
+void ConfigManager::addAudioDevice(const std::string& id, const std::string& name, GstDevice* device) {
+    auto di = std::make_shared<DeviceInfo>(name, device);
+    std::lock_guard<std::mutex> lock(mutex_);
+    audio_devices_[id] = std::move(di);
+}
+
+void ConfigManager::removeVideoDevice(const std::string& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    video_devices_.erase(id);
+}
+
+void ConfigManager::removeAudioDevice(const std::string& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    audio_devices_.erase(id);
+}
+
+void ConfigManager::getVideoDevices(std::map<std::string, std::shared_ptr<DeviceInfo>>& video_devices) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    video_devices = video_devices_;
+}
+void ConfigManager::getAudioDevices(std::map<std::string, std::shared_ptr<DeviceInfo>>& audio_devices) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    audio_devices = audio_devices_;
+}
+
+GstDevice* ConfigManager::getVideoDevice(const std::string& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = video_devices_.find(id);
+    if (it != video_devices_.end()) {
+        return it->second->device_;
+    }
+    return nullptr;
+}
+
+GstDevice* ConfigManager::getAudioDevice(const std::string& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = audio_devices_.find(id);
+    if (it != audio_devices_.end()) {
+        return it->second->device_;
+    }
+    return nullptr;
 }

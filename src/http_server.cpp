@@ -13,6 +13,8 @@ static void set_content(httplib::Response& res, const T& data) {
 void HttpServer::start() {
     thread_ = std::thread([this]()
     {
+        server_.set_mount_point("/", "./html");
+
         server_.Get("/status",
             [](const httplib::Request&, httplib::Response& res)
             {

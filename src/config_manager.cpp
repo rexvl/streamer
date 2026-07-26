@@ -9,7 +9,7 @@ ConfigManager& ConfigManager::getInstance() {
 }
 
 void ConfigManager::load() {
-    std::ifstream config_if("C:/_CODE/streamer/conf/config.json");
+    std::ifstream config_if("conf/config.json");
 
     nlohmann::json config;
     config_if >> config;

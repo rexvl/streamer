@@ -11,7 +11,7 @@ void from_json(const nlohmann::json& j, VideoSettings::Codec& c) {
     else if (s == "hevc")
         c = VideoSettings::Codec::HEVC;
     else
-        throw std::runtime_error("Unknown output type: " + s);
+        throw std::runtime_error("Unknown video codec: " + s);
 }
 
 inline
@@ -21,14 +21,14 @@ void from_json(const nlohmann::json& j, AudioSettings::Codec& c) {
     if (s == "aac")
         c = AudioSettings::Codec::AAC;
     else
-        throw std::runtime_error("Unknown output type: " + s);
+        throw std::runtime_error("Unknown audio codec: " + s);
 }
 
 inline
 void from_json(const nlohmann::json& j, VideoSettings& c) {
     j.at("device").get_to(c.device);
 
-    c.width = j.value("whidth", 0);
+    c.width = j.value("width", 0);
     c.height = j.value("height", 0);
     c.fps_n = j.value("fps_n", 0);
     c.fps_d = j.value("fps_d", 1);
@@ -108,10 +108,47 @@ void from_json(const nlohmann::json& j, std::map<std::string, StreamSettings>& s
 }
 
 inline
+void to_json(nlohmann::json& j, const VideoSettings::Codec& c) {
+    if (c == VideoSettings::Codec::AVC)
+        j = "avc";
+    else if (c == VideoSettings::Codec::HEVC) 
+        j = "hevc";
+    else
+        throw std::runtime_error("Unknown video codec");
+}
+
+inline
 void to_json(nlohmann::json& j, const VideoSettings& s) {
     j = nlohmann::json{
         { "device", s.device }
     };
+
+    if (s.width > 0) {
+        j["width"] = s.width;
+    }
+
+    if (s.height > 0) {
+        j["height"] = s.height;
+    }
+
+    if (s.fps_n > 0 && s.fps_d > 0) {
+        j["fps_n"] = s.fps_n;
+        j["fps_d"] = s.fps_d;
+    }
+
+    j["codec"] = s.codec;
+
+    if (s.bitrate > 0) {
+        j["bitrate"] = s.bitrate;
+    }
+}
+
+inline
+void to_json(nlohmann::json& j, const AudioSettings::Codec& c) {
+    if (c == AudioSettings::Codec::AAC)
+        j = "aac";
+    else
+        throw std::runtime_error("Unknown audio codec");
 }
 
 inline
@@ -133,6 +170,16 @@ void to_json(nlohmann::json& j, const AudioSettings& s) {
     if (s.bitrate > 0) {
         j["bitrate"] = s.bitrate;
     }
+}
+
+inline
+void to_json(nlohmann::json& j, const OutputSettings::Type& t) {
+    if (t == OutputSettings::Type::RTMP)
+        j = "rtmp";
+    else if (t == OutputSettings::Type::RTSP)
+        j = "rtsp";
+    else
+        throw std::runtime_error("Unknown output type");
 }
 
 inline

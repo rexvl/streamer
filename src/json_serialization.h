@@ -186,10 +186,14 @@ void to_json(nlohmann::json& j, const DeviceInfo& s) {
 
 inline
 void to_json(nlohmann::json& j, const std::map<std::string, std::shared_ptr<DeviceInfo>>& devices) {
-    j = nlohmann::json::object();
+    // Return devices as an array of objects { "id": <device_id>, "name": <display_name> }
+    // so web UI can display human-readable names while keeping ids.
+    j = nlohmann::json::array();
 
     for (const auto& it : devices) {
-        j[it.first] = *it.second;
+        nlohmann::json di;
+        di["id"] = it.first;
+        di["name"] = it.second ? it.second->name_ : std::string();
+        j.push_back(di);
     }
-
 }

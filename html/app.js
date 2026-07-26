@@ -7,22 +7,34 @@ async function loadStreams()
 
     try
     {
-        const response = await fetch("/streams");
+        const [videoList, audioList, streams] = await Promise.all([
+            fetch('/devices/video').then(r => r.json()),
+            fetch('/devices/audio').then(r => r.json()),
+            fetch('/streams').then(r => r.json())
+        ]);
 
-        const streams = await response.json();
+        // build id->name maps
+        const videoMap = {};
+        for (const d of videoList) {
+            if (d.id) videoMap[d.id] = d.name || d.id;
+        }
 
+        const audioMap = {};
+        for (const d of audioList) {
+            if (d.id) audioMap[d.id] = d.name || d.id;
+        }
 
         for (const stream of streams)
         {
-            addStreamRow(stream);
+            addStreamRow(stream, videoMap, audioMap);
         }
 
     }
     catch (e)
     {
         tbody.innerHTML =
-            `<tr>
-                <td colspan="4">
+        `<tr>
+                <td colspan="5">
                     Error: ${e}
                 </td>
              </tr>`;
@@ -31,7 +43,7 @@ async function loadStreams()
 
 
 
-function addStreamRow(stream)
+function addStreamRow(stream, videoMap, audioMap)
 {
     const tbody = document.getElementById("streams");
 
@@ -60,12 +72,27 @@ function addStreamRow(stream)
 
         <td>
             ${
+                stream.video
+                ?
+                `
+                ${videoMap && videoMap[stream.video.device] ? videoMap[stream.video.device] : stream.video.device}
+                <br>
+                ${stream.video.width || ''}x${stream.video.height || ''}
+                `
+                :
+                "disabled"
+            }
+        </td>
+
+
+        <td>
+            ${
                 stream.audio
                 ?
                 `
-                ${stream.audio.device}
+                ${audioMap && audioMap[stream.audio.device] ? audioMap[stream.audio.device] : stream.audio.device}
                 <br>
-                ${stream.audio.sampleRate} Hz
+                ${stream.audio.sampleRate || ''} Hz
                 `
                 :
                 "disabled"

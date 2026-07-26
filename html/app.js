@@ -99,7 +99,7 @@ function addStreamRow(stream, videoMap, audioMap)
                 <br>
                 ${stream.audio.codec || ''} ${stream.audio.sampleRate ? (' - ' + stream.audio.sampleRate + ' Hz') : ''}
                 ${stream.audio.channels ? (' - ' + stream.audio.channels + ' ch') : ''}
-                ${stream.audio.bitrate ? (' - ' + stream.audio.bitrate + ' kbps') : ''}
+                ${stream.audio.bitrate ? (' - ' + Math.round(stream.audio.bitrate / 1000) + ' kbps') : ''}
                 `
                 :
                 "disabled"
@@ -113,13 +113,17 @@ function addStreamRow(stream, videoMap, audioMap)
 
 
         <td>
-
+            <button
+                class="btn"
+                onclick="editStream('${stream.id}')">
+                Edit
+            </button>
             <button
                 class="danger"
-                onclick="deleteStream('${stream.id}')">
+                onclick="deleteStream('${stream.id}')"
+                style="margin-left:8px">
                 Delete
             </button>
-
         </td>
 
     `;
@@ -147,6 +151,138 @@ async function deleteStream(id)
 
 
     loadStreams();
+}
+// Expose functions to global window for inline onclick handlers
+// (some environments may not bind function declarations to window automatically)
+window.editStream = typeof editStream !== 'undefined' ? editStream : undefined;
+window.cancelEdit = typeof cancelEdit !== 'undefined' ? cancelEdit : undefined;
+window.deleteStream = typeof deleteStream !== 'undefined' ? deleteStream : undefined;
+window.addOutputRow = typeof addOutputRow !== 'undefined' ? addOutputRow : undefined;
+window.removeOutputRow = typeof removeOutputRow !== 'undefined' ? removeOutputRow : undefined;
+window.createStream = typeof createStream !== 'undefined' ? createStream : undefined;
+
+let currentEditingId = null;
+
+async function editStream(id) {
+    try {
+        const resp = await fetch('/streams/' + id);
+        if (resp.status !== 200) {
+            alert('Failed to load stream for edit');
+            return;
+        }
+
+        const stream = await resp.json();
+
+        // fill form
+        currentEditingId = id;
+
+        // video
+        const videoSel = document.getElementById('video-select');
+        if (videoSel) videoSel.value = stream.video ? stream.video.device : '';
+        updateVideoParamsVisibility();
+        if (stream.video) {
+            const wEl = document.getElementById('video-width');
+            const hEl = document.getElementById('video-height');
+            const fpsEl = document.getElementById('video-fps');
+            const vcodecEl = document.getElementById('video-codec');
+            const vbEl = document.getElementById('video-bitrate');
+
+            if (wEl) wEl.value = stream.video.width || '';
+            if (hEl) hEl.value = stream.video.height || '';
+            if (vcodecEl) vcodecEl.value = stream.video.codec || 'avc';
+            if (vbEl) vbEl.value = stream.video.bitrate || '';
+
+            if (fpsEl) {
+                if (stream.video.fps_n && stream.video.fps_d) {
+                    if (stream.video.fps_d === 1) fpsEl.value = String(stream.video.fps_n);
+                    else fpsEl.value = stream.video.fps_n + '/' + stream.video.fps_d;
+                } else {
+                    fpsEl.value = '';
+                }
+            }
+        }
+
+        // audio
+        const audioSel = document.getElementById('audio-select');
+        if (audioSel) audioSel.value = stream.audio ? stream.audio.device : '';
+        updateAudioParamsVisibility();
+        if (stream.audio) {
+            const srEl = document.getElementById('audio-samplerate');
+            const chEl = document.getElementById('audio-channels');
+            const acodecEl = document.getElementById('audio-codec');
+            const abrEl = document.getElementById('audio-bitrate');
+
+            if (srEl) srEl.value = stream.audio.sampleRate || srEl.value;
+            if (chEl) chEl.value = stream.audio.channels || chEl.value;
+            if (acodecEl) acodecEl.value = stream.audio.codec || acodecEl.value;
+            // server stores bitrate in bits/sec (e.g. 128000) — convert to kbps for UI
+            if (abrEl) abrEl.value = stream.audio.bitrate ? Math.round(stream.audio.bitrate / 1000) : abrEl.value;
+        }
+
+        // outputs
+        const container = document.getElementById('outputs-container');
+        if (container) {
+            container.innerHTML = '';
+            const outs = stream.outputs || [];
+            if (outs.length === 0) {
+                addOutputRow();
+            } else {
+                for (const o of outs) {
+                    const row = document.createElement('div');
+                    row.className = 'output-row';
+                    row.innerHTML = `
+                        <select class="output-type">
+                            <option value="rtsp">RTSP</option>
+                            <option value="rtmp">RTMP</option>
+                        </select>
+                        <input class="output-url" type="text" placeholder="url (e.g. rtmp://...)">
+                        <button type="button" class="btn small" onclick="removeOutputRow(this)">Remove</button>
+                    `;
+                    container.appendChild(row);
+                    const typeEl = row.querySelector('.output-type');
+                    const urlEl = row.querySelector('.output-url');
+                    if (typeEl) typeEl.value = o.type || 'rtsp';
+                    if (urlEl) urlEl.value = o.url || '';
+                }
+            }
+        }
+
+        // set UI to edit mode
+        const createBtn = document.getElementById('create-btn');
+        const cancelBtn = document.getElementById('cancel-edit-btn');
+        if (createBtn) createBtn.textContent = 'Save';
+        if (cancelBtn) cancelBtn.style.display = '';
+
+        // scroll to form
+        document.getElementById('new-stream-section').scrollIntoView({ behavior: 'smooth' });
+
+    } catch (e) {
+        alert('Failed to load stream: ' + e);
+    }
+}
+
+function cancelEdit() {
+    currentEditingId = null;
+    // reset form fields
+    const form = document.getElementById('new-stream-form');
+    if (form) form.reset();
+    // reset selects to (none)
+    const videoSel = document.getElementById('video-select');
+    const audioSel = document.getElementById('audio-select');
+    if (videoSel) videoSel.value = '';
+    if (audioSel) audioSel.value = '';
+    updateAudioParamsVisibility();
+    updateVideoParamsVisibility();
+    // reset outputs to single empty row
+    const container = document.getElementById('outputs-container');
+    if (container) {
+        container.innerHTML = '';
+        addOutputRow();
+    }
+    const createBtn = document.getElementById('create-btn');
+    const cancelBtn = document.getElementById('cancel-edit-btn');
+    if (createBtn) createBtn.textContent = 'Create stream';
+    if (cancelBtn) cancelBtn.style.display = 'none';
 }
 
 
@@ -254,11 +390,12 @@ async function createStream() {
 
         const sr = srEl ? Number(srEl.value) : 0;
         const ch = chEl ? Number(chEl.value) : 0;
-        const br = brEl ? Number(brEl.value) : 0;
+        const br = brEl ? Number(brEl.value) : 0; // br is in kbps from UI
 
         if (sr > 0) audioObj.sampleRate = sr;
         if (ch > 0) audioObj.channels = ch;
-        if (br > 0) audioObj.bitrate = br;
+        // send bitrate in bits/sec (e.g. 128 kbps -> 128000)
+        if (br > 0) audioObj.bitrate = br * 1000;
 
         body.audio = audioObj;
     }
@@ -305,6 +442,8 @@ async function createStream() {
         const existingStreams = await fetch('/streams').then(r => r.json());
         const existingUrls = new Set();
         for (const s of existingStreams || []) {
+            // when editing, allow outputs that belong to the stream being edited
+            if (currentEditingId && s.id === currentEditingId) continue;
             for (const o of s.outputs || []) {
                 if (o && o.url) existingUrls.add(o.url);
             }
@@ -323,18 +462,32 @@ async function createStream() {
     }
 
     try {
-        const resp = await fetch('/streams', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
+        let resp;
+        if (currentEditingId) {
+            resp = await fetch('/streams/' + currentEditingId, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+        } else {
+            resp = await fetch('/streams', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+        }
 
-        if (resp.status === 201) {
-            alert('Stream created');
+        if (resp.status === 201 || resp.status === 200) {
+            alert(currentEditingId ? 'Stream updated' : 'Stream created');
+            currentEditingId = null;
+            const createBtn = document.getElementById('create-btn');
+            const cancelBtn = document.getElementById('cancel-edit-btn');
+            if (createBtn) createBtn.textContent = 'Create stream';
+            if (cancelBtn) cancelBtn.style.display = 'none';
             loadStreams();
         } else {
             const j = await resp.json().catch(() => null);
-            alert('Failed to create stream: ' + (j && j.error ? j.error : resp.statusText));
+            alert('Failed to create/update stream: ' + (j && j.error ? j.error : resp.statusText));
         }
     } catch (e) {
         alert('Error: ' + e);

@@ -19,48 +19,128 @@
     <section id="new-stream-section">
     <h2>Create new stream</h2>
     <form id="new-stream-form" class="form" onsubmit="event.preventDefault(); createStream();">
-        <div class="form-row">
-            <label class="form-label">Video</label>
-            <select id="video-select" class="form-control">
-                <option value="">(none)</option>
-            </select>
+
+        <div class="settings-block">
+            <div class="settings-title">Video</div>
+            <div class="form-row">
+                <label class="form-label">Device</label>
+                <select id="video-select" class="form-control" onchange="updateVideoParamsVisibility()">
+                    <option value="">(none)</option>
+                </select>
+            </div>
+
+            <div class="video-params" style="display:none">
+                <label for="video-width">Width</label>
+                <input id="video-width" type="number" min="0" class="form-control" placeholder="e.g. 1920">
+
+                <label for="video-height">Height</label>
+                <input id="video-height" type="number" min="0" class="form-control" placeholder="e.g. 1080">
+
+                <label for="video-fps">FPS</label>
+                <input id="video-fps" type="text" class="form-control" placeholder="e.g. 30 or 30000/1001" value="30">
+
+                <label for="video-codec">Codec</label>
+                <select id="video-codec" class="form-control">
+                    <option value="avc">AVC</option>
+                    <option value="hevc">HEVC</option>
+                </select>
+
+                <label for="video-bitrate">Bitrate (kbps)</label>
+                <input id="video-bitrate" type="number" min="0" class="form-control" placeholder="e.g. 1000">
+            </div>
         </div>
 
-        <div class="form-row">
-            <label class="form-label">Audio</label>
-            <select id="audio-select" class="form-control">
-                <option value="">(none)</option>
-            </select>
+        <div class="settings-block">
+            <div class="settings-title">Audio</div>
+            <div class="form-row">
+                <label class="form-label">Device</label>
+                <select id="audio-select" class="form-control" onchange="updateAudioParamsVisibility()">
+                    <option value="">(none)</option>
+                </select>
+            </div>
+
+            <div class="audio-params" style="display:none">
+                <label for="audio-samplerate">Sample rate (Hz)</label>
+                <select id="audio-samplerate" class="form-control">
+                    <option value="48000" selected>48000</option>
+                    <option value="44100">44100</option>
+                    <option value="32000">32000</option>
+                    <option value="22050">22050</option>
+                    <option value="16000">16000</option>
+                    <option value="11025">11025</option>
+                    <option value="8000">8000</option>
+                </select>
+
+                <label for="audio-channels">Channels</label>
+                <select id="audio-channels" class="form-control">
+                    <option value="1">1</option>
+                    <option value="2" selected>2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                    <option value="6">6</option>
+                    <option value="7">7</option>
+                    <option value="8">8</option>
+                </select>
+
+                <label for="audio-codec">Codec</label>
+                <select id="audio-codec" class="form-control">
+                    <option value="aac">AAC</option>
+                </select>
+
+                <label for="audio-bitrate">Bitrate (kbps)</label>
+                <select id="audio-bitrate" class="form-control">
+                    <option value="32">32 kbps — voice, very low bandwidth</option>
+                    <option value="48">48 kbps — voice / podcast</option>
+                    <option value="64">64 kbps — voice, mono</option>
+                    <option value="96">96 kbps — good mono / weak stereo</option>
+                    <option value="128" selected>128 kbps — standard for stereo streams (default)</option>
+                    <option value="160">160 kbps — enhanced stereo</option>
+                    <option value="192">192 kbps — high quality</option>
+                    <option value="256">256 kbps — near-transparent quality</option>
+                    <option value="320">320 kbps — maximum for AAC-LC (often excessive)</option>
+                </select>
+            </div>
         </div>
 
-        <div class="form-row">
-            <label class="form-label">Outputs</label>
-            <div id="outputs-container" class="outputs-list">
-                <div class="output-row">
-                    <select class="output-type">
-                        <option value="rtsp">RTSP</option>
-                        <option value="rtmp">RTMP</option>
-                    </select>
-                    <input class="output-url" type="text" placeholder="url (e.g. rtmp://...)">
-                    <button type="button" class="btn small" onclick="removeOutputRow(this)">Remove</button>
+        <div class="settings-block">
+            <div class="settings-title">Outputs</div>
+            <div class="form-row">
+                <div class="form-label"></div>
+                <div id="outputs-container" class="outputs-list">
+                    <div class="output-row">
+                        <select class="output-type">
+                            <option value="rtsp">RTSP</option>
+                            <option value="rtmp">RTMP</option>
+                        </select>
+                        <input class="output-url" type="text" placeholder="url (e.g. rtmp://...)">
+                        <button type="button" class="btn small" onclick="removeOutputRow(this)">Remove</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div></div>
+                <div>
+                    <button type="button" class="btn" onclick="addOutputRow()">Add output</button>
                 </div>
             </div>
         </div>
 
+        <!-- Create button moved below outputs block -->
         <div class="form-row">
             <div></div>
             <div>
-                <button type="button" class="btn" onclick="addOutputRow()">Add output</button>
                 <button type="submit" class="btn primary">Create stream</button>
             </div>
         </div>
+
     </form>
-</section>
+    </section>
 
 <table>
     <thead>
         <tr>
-            <th>ID</th>
             <th>Video</th>
             <th>Audio</th>
             <th>Outputs</th>

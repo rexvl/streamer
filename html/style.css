@@ -1,61 +1,78 @@
-body {
-    font-family: Arial, sans-serif;
-    background: #202124;
-    color: #eee;
-    margin: 30px;
+.content { margin: 3vh 6vw; max-width: none; padding-top: 3vh; }
+/* make width calculations consistent so .form and the table inside .content align exactly */
+*, *::before, *::after { box-sizing: border-box; }
+body { font-family: Arial, sans-serif; margin: 20px; color:#222 }
+h1 { margin: 0 }
+.page-header { display:flex; align-items:center; justify-content:space-between; margin: 0 0 12px 0 }
+.form { width: 100%; margin: 8px 0 20px 0; padding: 12px; border: 1px solid #eee; background:#fafafa }
+.form-row { display:flex; gap:12px; align-items:center; margin-bottom:10px }
+.form-label { width:120px; font-weight:600 }
+
+/* make device labels inside settings blocks not bold and align with audio labels */
+.settings-block .form-label { width:160px; font-weight:400 }
+.form-control { padding:8px 10px; min-width:240px; border:1px solid #ccc; border-radius:4px; background:#fff; color:#222 }
+.outputs-list { flex:1 }
+.output-row { display:flex; gap:8px; align-items:center; margin-bottom:6px }
+.output-row .output-type { padding:8px 10px; border:1px solid #ccc; border-radius:4px; background:#fff }
+.output-row .output-url { flex:1; padding:8px 10px; border:1px solid #ccc; border-radius:4px; }
+
+/* audio params vertical layout */
+.audio-params { display:grid; grid-template-columns: 160px 1fr; gap:8px 12px; align-items:center; flex:1 }
+.audio-params label { justify-self:start }
+.audio-params select, .audio-params input { width:100%; max-width:420px }
+
+/* video params use same layout as audio params */
+.video-params { display:grid; grid-template-columns: 160px 1fr; gap:8px 12px; align-items:center; flex:1 }
+.video-params label { justify-self:start }
+.video-params select, .video-params input { width:100%; max-width:420px }
+
+/* settings block styling */
+.settings-block { border: 1px solid #e9e9e9; padding:12px; border-radius:8px; background:#ffffff; margin-bottom:12px }
+.settings-title { font-weight:700; margin-bottom:8px; color:#333 }
+.settings-block .form-row { margin-bottom:8px }
+
+/* Ensure controls in settings blocks align with the grid-based param controls */
+.settings-block .form-row { display:flex; gap:12px; align-items:center }
+.settings-block .form-row .form-label { width:160px; font-weight:400 }
+/* Only style immediate control children of a form-row (device selects, inputs) so
+   nested controls inside .outputs-list/.output-row are not affected */
+.settings-block .form-row > .form-control,
+.settings-block .form-row > select { width:100%; max-width:420px }
+
+/* Unified control styles */
+input[type="text"], textarea, select, .form-control, .output-url, .output-type {
+  font: inherit;
+  color: #222;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 8px 10px;
 }
 
-
-h1 {
-    margin-bottom: 20px;
+button, .btn {
+  font: inherit;
+  padding: 8px 12px;
+  cursor: pointer;
+  border: 1px solid #bfbfbf;
+  background: #f5f5f5;
+  color: #222;
+  border-radius: 4px;
 }
 
+.btn.small { padding:6px 8px; font-size:0.9em }
+.btn.primary { background:#0078D4; color:#fff; border-color:#0078D4 }
+.btn.danger, .danger { background:#d9534f; color:#fff; border-color:#d43f3a }
 
-button {
-    background: #3c4043;
-    color: white;
-    border: 1px solid #666;
-    padding: 8px 16px;
-    cursor: pointer;
-    border-radius: 4px;
+.content table { width:100%; border-collapse:collapse; margin: 0 0 20px 0; }
+.content table th, .content table td { border:1px solid #e6e6e6; padding:10px; text-align:left }
+.content table th { background:#f6f6f6 }
+
+@media (max-width:900px) {
+  .form-row { flex-direction:column; align-items:flex-start }
+  .form-label { width:auto }
 }
 
-
-button:hover {
-    background: #5f6368;
-}
-
-
-table {
-    width: 100%;
-    margin-top: 20px;
-    border-collapse: collapse;
-}
-
-
-th {
-    text-align: left;
-    background: #303134;
-    padding: 10px;
-}
-
-
-td {
-    padding: 10px;
-    border-bottom: 1px solid #444;
-}
-
-
-tr:hover {
-    background: #2a2b2d;
-}
-
-
-.status {
-    color: #7cff7c;
-}
-
-
-.danger {
-    background: #8b0000;
+/* smaller screens: reduce side margins so content fits nicely */
+@media (max-width:600px) {
+  .content { margin: 3vh 4vw; padding-top: 3vh }
 }

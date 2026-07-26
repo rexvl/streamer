@@ -18,6 +18,7 @@ async function loadStreams()
         for (const d of videoList) {
             if (d.id) videoMap[d.id] = d.name || d.id;
         }
+
         const audioMap = {};
         for (const d of audioList) {
             if (d.id) audioMap[d.id] = d.name || d.id;
@@ -25,6 +26,11 @@ async function loadStreams()
         // populate device selects
         populateDeviceSelect('video-select', videoList);
         populateDeviceSelect('audio-select', audioList);
+        // show/hide audio and video params depending on selected device
+        updateAudioParamsVisibility();
+        updateVideoParamsVisibility();
+        // show/hide video params depending on selected device
+        updateVideoParamsVisibility();
 
         for (const stream of streams)
         {
@@ -36,7 +42,7 @@ async function loadStreams()
     {
         tbody.innerHTML =
         `<tr>
-                <td colspan="5">
+                <td colspan="4">
                     Error: ${e}
                 </td>
              </tr>`;
@@ -58,7 +64,6 @@ function addStreamRow(stream, videoMap, audioMap)
     for (const output of stream.outputs ?? [])
     {
         outputs += `
-            ${output.type}:
             ${output.url}
             <br>
         `;
@@ -67,11 +72,7 @@ function addStreamRow(stream, videoMap, audioMap)
 
     row.innerHTML = `
 
-        <td>
-            ${stream.id}
-        </td>
-
-
+        
         <td>
             ${
                 stream.video
@@ -79,7 +80,9 @@ function addStreamRow(stream, videoMap, audioMap)
                 `
                 ${videoMap && videoMap[stream.video.device] ? videoMap[stream.video.device] : stream.video.device}
                 <br>
-                ${stream.video.width || ''}x${stream.video.height || ''}
+                ${stream.video.codec || ''} ${stream.video.width ? (' - ' + stream.video.width + 'x' + stream.video.height) : ''}
+                ${stream.video.fps_n ? (' - ' + stream.video.fps_n + '/' + stream.video.fps_d + ' fps') : ''}
+                ${stream.video.bitrate ? (' - ' + stream.video.bitrate + ' kbps') : ''}
                 `
                 :
                 "disabled"
@@ -94,7 +97,9 @@ function addStreamRow(stream, videoMap, audioMap)
                 `
                 ${audioMap && audioMap[stream.audio.device] ? audioMap[stream.audio.device] : stream.audio.device}
                 <br>
-                ${stream.audio.sampleRate || ''} Hz
+                ${stream.audio.codec || ''} ${stream.audio.sampleRate ? (' - ' + stream.audio.sampleRate + ' Hz') : ''}
+                ${stream.audio.channels ? (' - ' + stream.audio.channels + ' ch') : ''}
+                ${stream.audio.bitrate ? (' - ' + stream.audio.bitrate + ' kbps') : ''}
                 `
                 :
                 "disabled"
@@ -162,22 +167,100 @@ function populateDeviceSelect(selectId, deviceList) {
 }
 
 
+function updateAudioParamsVisibility() {
+    const audioSel = document.getElementById('audio-select');
+    const params = document.querySelector('.audio-params');
+    if (!params || !audioSel) return;
+
+    if (!audioSel.value) {
+        params.style.display = 'none';
+    } else {
+        // ensure grid display
+        params.style.display = 'grid';
+    }
+}
+
+function updateVideoParamsVisibility() {
+    const videoSel = document.getElementById('video-select');
+    const params = document.querySelector('.video-params');
+    if (!params || !videoSel) return;
+
+    if (!videoSel.value) {
+        params.style.display = 'none';
+    } else {
+        params.style.display = 'grid';
+    }
+}
+
+
 async function createStream() {
     const videoSel = document.getElementById('video-select');
     const audioSel = document.getElementById('audio-select');
     const body = {};
     if (videoSel && videoSel.value) {
-        body.video = {
+        const vcodecEl = document.getElementById('video-codec');
+        const wEl = document.getElementById('video-width');
+        const hEl = document.getElementById('video-height');
+        const fpsEl = document.getElementById('video-fps');
+        const vbEl = document.getElementById('video-bitrate');
+
+        const videoObj = {
             device: videoSel.value,
-            codec: 'avc'
+            codec: vcodecEl ? vcodecEl.value : 'avc'
         };
+
+        const w = wEl ? Number(wEl.value) : 0;
+        const h = hEl ? Number(hEl.value) : 0;
+        const vb = vbEl ? Number(vbEl.value) : 0;
+
+        if (w > 0) videoObj.width = w;
+        if (h > 0) videoObj.height = h;
+
+        // parse FPS: allow "30" or "30000/1001" or "30/1"
+        if (fpsEl && fpsEl.value) {
+            const v = fpsEl.value.trim();
+            if (v.includes('/')) {
+                const parts = v.split('/');
+                const n = Number(parts[0]) || 0;
+                const d = Number(parts[1]) || 1;
+                if (n > 0) {
+                    videoObj.fps_n = n;
+                    videoObj.fps_d = d > 0 ? d : 1;
+                }
+            } else {
+                const n = Number(v) || 0;
+                if (n > 0) {
+                    videoObj.fps_n = n;
+                    videoObj.fps_d = 1;
+                }
+            }
+        }
+
+        if (vb > 0) videoObj.bitrate = vb;
+
+        body.video = videoObj;
     }
 
     if (audioSel && audioSel.value) {
-        body.audio = {
+        const codecEl = document.getElementById('audio-codec');
+        const srEl = document.getElementById('audio-samplerate');
+        const chEl = document.getElementById('audio-channels');
+        const brEl = document.getElementById('audio-bitrate');
+
+        const audioObj = {
             device: audioSel.value,
-            codec: 'aac'
+            codec: codecEl ? codecEl.value : 'aac'
         };
+
+        const sr = srEl ? Number(srEl.value) : 0;
+        const ch = chEl ? Number(chEl.value) : 0;
+        const br = brEl ? Number(brEl.value) : 0;
+
+        if (sr > 0) audioObj.sampleRate = sr;
+        if (ch > 0) audioObj.channels = ch;
+        if (br > 0) audioObj.bitrate = br;
+
+        body.audio = audioObj;
     }
 
     // must specify at least video or audio
@@ -277,11 +360,40 @@ function addOutputRow() {
 }
 
 function removeOutputRow(btn) {
-    const row = btn && btn.parentElement;
-    if (!row) return;
     const container = document.getElementById('outputs-container');
     if (!container) return;
+
+    const rows = container.querySelectorAll('.output-row');
+    if (!rows || rows.length <= 1) {
+        alert('Cannot remove the last output. Add another output first.');
+        return;
+    }
+
+    const row = btn && btn.parentElement;
+    if (!row) return;
     container.removeChild(row);
 }
+
+// attach change listener so visibility updates when user changes audio device
+const audioSelectEl = document.getElementById && document.getElementById('audio-select');
+if (audioSelectEl) {
+    audioSelectEl.addEventListener('change', updateAudioParamsVisibility);
+}
+
+// attach listener for video select
+const videoSelectEl = document.getElementById && document.getElementById('video-select');
+if (videoSelectEl) {
+    videoSelectEl.addEventListener('change', updateVideoParamsVisibility);
+}
+
+// Fallback: listen for change events on the document in case inline handlers/listeners
+// don't fire in some environments. This ensures visibility toggles whenever the
+// selects change value.
+document.addEventListener('change', function (ev) {
+    const t = ev.target;
+    if (!t) return;
+    if (t.id === 'video-select') updateVideoParamsVisibility();
+    if (t.id === 'audio-select') updateAudioParamsVisibility();
+});
 
 loadStreams();

@@ -49,6 +49,17 @@ std::string ConfigManager::addStream(StreamSettings& settings) {
     return settings.id;
 }
 
+bool ConfigManager::updateStream(const StreamSettings& settings) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = streams_.find(settings.id);
+    if (it != streams_.end()) {
+        it->second = settings;
+        return true;
+    }
+
+    return false;
+}
+
 bool ConfigManager::removeStream(const std::string& id) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = streams_.find(id);

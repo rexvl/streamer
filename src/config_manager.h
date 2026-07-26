@@ -76,6 +76,7 @@ public:
     void getStreams(std::map<std::string, StreamSettings>& streams);
     bool getStream(StreamSettings& stream, const std::string& id);
     std::string addStream(StreamSettings& stream);
+    bool updateStream(const StreamSettings& settings);
     bool removeStream(const std::string& id);
 
     // device api

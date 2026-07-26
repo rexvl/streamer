@@ -69,6 +69,37 @@ void HttpServer::start() {
                 }
             });
 
+        server_.Put(R"(/streams/(\w+))",
+            [](const httplib::Request& req, httplib::Response& res)
+            {
+                const std::string id = req.matches[1];
+
+                try {
+                    auto j = nlohmann::json::parse(req.body);
+
+                    StreamSettings settings = j.get<StreamSettings>();
+                    settings.id = id;
+
+                    if (!ConfigManager::getInstance().updateStream(settings)) {
+                        res.status = 404;
+                        set_content(res, nlohmann::json{
+                            {"error", "Stream not found"}
+                            });
+                        return;
+                    }
+
+                    set_content(res, nlohmann::json{
+                        {"id", id},
+                        {"status", "updated"}
+                        });
+                } catch (const std::exception& e) {
+                    res.status = 400;
+                    set_content(res, nlohmann::json{
+                        {"error", e.what()}
+                        });
+                }
+            });
+
         server_.Delete(R"(/streams/(\w+))",
             [](const httplib::Request& req, httplib::Response& res)
             {

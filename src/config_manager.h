@@ -1,7 +1,7 @@
 #pragma once
 #include <string>
 #include <map>
-#include <mutex>
+#include <shared_mutex>
 
 #include <gst/gst.h>
 
@@ -63,7 +63,7 @@ struct DeviceInfo {
 };
 
 class ConfigManager {
-    std::mutex mutex_;
+    std::shared_mutex mutex_;
     std::map<std::string, StreamSettings> streams_;
     std::map<std::string, std::shared_ptr<DeviceInfo>> video_devices_;
     std::map<std::string, std::shared_ptr<DeviceInfo>> audio_devices_;

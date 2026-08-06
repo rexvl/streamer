@@ -18,7 +18,26 @@ void HttpServer::start() {
         server_.Get("/status",
             [](const httplib::Request&, httplib::Response& res)
             {
-                res.set_content("OK", "text/plain");
+                std::map<std::string, StreamStatus> streams_status;
+                ConfigManager::getInstance().getStreamsStatus(streams_status);
+                set_content(res, streams_status);
+            });
+
+        server_.Get(R"(/status/(\w+))",
+            [](const httplib::Request& req, httplib::Response& res)
+            {
+                const std::string id = req.matches[1];
+
+                StreamStatus streams_status;
+                if (!ConfigManager::getInstance().getStreamStatus(streams_status, id)) {
+                    res.status = 404;
+                    set_content(res, nlohmann::json{
+                        {"error", "Stream not found"}
+                        });
+                    return;
+                }
+
+                set_content(res, streams_status);
             });
 
         server_.Get("/streams",

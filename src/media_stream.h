@@ -1,11 +1,17 @@
 #pragma once
 
 struct MediaStream {
+    const std::string id_;
     GstElement* pipeline{nullptr};
     GstBus *bus{nullptr};
     std::unique_ptr<VideoSource> video;
     std::unique_ptr<AudioSource> audio;
     std::map<std::string, std::unique_ptr<MediaOutput>> outputs;
+    bool playing_{ false };
+    int inactivity_count_{ 0 };
+
+    MediaStream(const std::string& id) : id_(id) {
+    }
 
     bool create() {
         pipeline = gst_pipeline_new(nullptr);
@@ -26,30 +32,34 @@ struct MediaStream {
         return status != GST_STATE_CHANGE_FAILURE;
     }
 
-    bool addVideo(const VideoSettings& settings, GstDevice* device) {
-        if (video || !outputs.empty()) {
+    bool addVideo(const VideoSettings& settings) {
+        if (video || !outputs.empty() || !settings.device) {
             return false;
         }
 
         video = std::make_unique<VideoSource>(pipeline, settings);
-        if (!video->create(device)) {
+        if (!video->create()) {
             return false;
         }
 
         return true;
     }
 
-    bool addAudio(const AudioSettings& settings, GstDevice* device) {
-        if (audio || !outputs.empty()) {
+    bool addAudio(const AudioSettings& settings) {
+        if (audio || !outputs.empty() || !settings.device) {
             return false;
         }
 
         audio = std::make_unique<AudioSource>(pipeline, settings);
-        if (!audio->create(device)) {
+        if (!audio->create()) {
             return false;
         }
 
         return true;
+    }
+
+    bool IsSourcesEmpty() {
+        return (!video) && (!audio);
     }
 
     bool addOutput(const std::string& id, const OutputSettings& settings) {
@@ -73,7 +83,11 @@ struct MediaStream {
         outputs.emplace(id, std::move(output));
         return true;
     }
-    
+
+    bool IsOutputsEmpty() {
+        return outputs.empty();
+    }
+
     bool removeVideo() {
         return false;
     }
@@ -94,6 +108,12 @@ struct MediaStream {
                 // remove output
                 return false;
             }
+
+            if (!settings_it->second.enabled) {
+                // remove output
+                return false;
+            }
+
             settings.erase(settings_it);
             outputs_it++;
         }
@@ -110,19 +130,21 @@ struct MediaStream {
     bool onError(GstElement* src) {
         if (video && video->video_bin == src) {
             printf("video source failed\n");
+            video->status = SourceStatus::kFail;
             return false;
         }
 
         if (audio && audio->audio_bin == src) {
             printf("audio source failed\n");
+            audio->status = SourceStatus::kFail;
             return false;
         }
 
         for (auto& it : outputs) {
             auto& output = it.second;
-
             if (output->output_bin == src) {
                 printf("output:%s failed\n", it.first.c_str());
+                output->status = OutputStatus::kFail;
                 return false;
             }
         }
@@ -196,6 +218,12 @@ struct MediaStream {
                     gst_element_state_get_name(new_state),
                     gst_element_state_get_name(pending));
 
+                if (obj == GST_OBJECT(pipeline) &&
+                        GST_STATE_PLAYING == new_state) {
+                    printf("!!!PLAYING!!!\n");
+                    playing_ = true;
+                }
+
                 break;
             }
 
@@ -206,7 +234,6 @@ struct MediaStream {
         gst_message_unref(msg);
         return true;
     }
-
 
     ~MediaStream() {
         video.reset();
@@ -223,5 +250,6 @@ struct MediaStream {
             gst_object_unref(pipeline);
         }
 
+        //ConfigManager::getInstance().setStreamStatus(id_, status_);
     }
 };

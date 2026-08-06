@@ -5,12 +5,18 @@ struct VideoSource {
     VideoSettings settings;
     GstElement* video_bin{ nullptr };
     GstElement* video_tee{ nullptr };
+    std::atomic<uint32_t> frame_count{ 0 };
+    SourceStatus status { SourceStatus::kSuccess };
 
     VideoSource(GstElement* p, const VideoSettings& vs) :
         pipeline(p), settings(vs) {
     }
 
-    bool create(GstDevice* device) {
+    bool create() {
+        if (!settings.device) {
+            return false;
+        }
+
         video_bin = gst_bin_new(NULL);
         if (!video_bin) {
             return false;
@@ -20,7 +26,7 @@ struct VideoSource {
             return false;
         }
 
-        GstElement* capture = gst_device_create_element(device, NULL);
+        GstElement* capture = gst_device_create_element(settings.device, NULL);
         if (!capture) {
             return false;
         }
@@ -77,7 +83,13 @@ struct VideoSource {
         }
 
         gst_object_unref(source_pad);
-
+/*
+        gst_pad_add_probe(source_ghost,
+            GST_PAD_PROBE_TYPE_BUFFER,
+            buffer_probe,
+            this,
+            NULL);
+*/
         video_tee = gst_element_factory_make("tee", NULL);
         if (!video_tee) {
             return false;

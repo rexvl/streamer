@@ -26,7 +26,7 @@ void from_json(const nlohmann::json& j, AudioSettings::Codec& c) {
 
 inline
 void from_json(const nlohmann::json& j, VideoSettings& c) {
-    j.at("device").get_to(c.device);
+    j.at("device").get_to(c.device_id);
 
     c.width = j.value("width", 0);
     c.height = j.value("height", 0);
@@ -39,7 +39,7 @@ void from_json(const nlohmann::json& j, VideoSettings& c) {
 
 inline
 void from_json(const nlohmann::json& j, AudioSettings& c) {
-    j.at("device").get_to(c.device);
+    j.at("device").get_to(c.device_id);
 
     c.sampleRate = j.value("sampleRate", 0);
     c.channel_count = j.value("channels", 0);
@@ -63,6 +63,11 @@ void from_json(const nlohmann::json& j, OutputSettings::Type& type) {
 inline
 void from_json(const nlohmann::json& j, OutputSettings& c) {
     j.at("type").get_to(c.type);
+
+    if (j.contains("enbaled")) {
+        j.at("enabled").get_to(c.enabled);
+    }
+
     j.at("url").get_to(c.url);
 }
 
@@ -120,7 +125,7 @@ void to_json(nlohmann::json& j, const VideoSettings::Codec& c) {
 inline
 void to_json(nlohmann::json& j, const VideoSettings& s) {
     j = nlohmann::json{
-        { "device", s.device }
+        { "device", s.device_id }
     };
 
     if (s.width > 0) {
@@ -154,7 +159,7 @@ void to_json(nlohmann::json& j, const AudioSettings::Codec& c) {
 inline
 void to_json(nlohmann::json& j, const AudioSettings& s) {
     j = nlohmann::json{
-        { "device", s.device }
+        { "device", s.device_id }
     };
 
     if (s.sampleRate > 0) {
@@ -242,5 +247,72 @@ void to_json(nlohmann::json& j, const std::map<std::string, std::shared_ptr<Devi
         di["id"] = it.first;
         di["name"] = it.second ? it.second->name_ : std::string();
         j.push_back(di);
+    }
+}
+
+inline
+void to_json(nlohmann::json& j, const SourceStatus status) {
+    if (status == SourceStatus::kDisabled)
+        j = "disabled";
+    else if (status == SourceStatus::kUnknown)
+        j = "unknown";
+    else if (status == SourceStatus::kUnavailable) 
+        j = "unavailable";
+    else if (status == SourceStatus::kSuccess)
+        j = "success";
+    else if (status == SourceStatus::kFail)
+        j = "fail";
+    else
+        throw std::runtime_error("Unknown source status");
+}
+
+inline
+void to_json(nlohmann::json& j, const OutputStatus status) {
+    if (status == OutputStatus::kUnknown)
+        j = "unknown";
+    else if (status == OutputStatus::kSuccess)
+        j = "success";
+    else if (status == OutputStatus::kFail)
+        j = "fail";
+    else
+        throw std::runtime_error("Unknown source status");
+}
+
+inline
+void to_json(nlohmann::json& j, const  std::map<std::string, OutputStatus>& output_status) {
+    j = nlohmann::json::array();
+
+    for (const auto& it : output_status) {
+        nlohmann::json di;
+        di["id"] = it.first;
+
+        di["status"] = it.second;
+
+        j.push_back(di);
+    }
+}
+
+inline
+void to_json(nlohmann::json& j, const StreamStatus& info) {
+    j["id"] = info.id;
+
+    if (info.video_status != SourceStatus::kUnknown) {
+        j["video_status"] = info.video_status;
+    }
+
+    if (info.audio_status != SourceStatus::kUnknown) {
+        j["audio_status"] = info.audio_status;
+    }
+
+    j["outputs"] = info.output_status;
+}
+
+
+inline
+void to_json(nlohmann::json& j, const std::map<std::string, StreamStatus>& streams_status) {
+    j = nlohmann::json::array();
+
+    for (const auto& it : streams_status) {
+        j.push_back(it.second);
     }
 }

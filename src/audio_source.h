@@ -1,16 +1,31 @@
 #pragma once
+#include <atomic>
 
 struct AudioSource {
     GstElement* pipeline;
     AudioSettings settings;
     GstElement* audio_bin{ nullptr };
     GstElement* audio_tee{ nullptr };
+    std::atomic<uint32_t> frame_count{ 0 };
+    SourceStatus status{ SourceStatus::kSuccess };
 
     AudioSource(GstElement* p, const AudioSettings& as) :
         pipeline(p), settings(as) {
     }
 
-    bool create(GstDevice* device) {
+    static GstPadProbeReturn buffer_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
+        auto self = static_cast<AudioSource*>(user_data);
+        if (self) {
+            self->frame_count.fetch_add(1, std::memory_order_relaxed);
+        }
+        return GST_PAD_PROBE_OK;
+    }
+
+    bool create() {
+        if (!settings.device) {
+            return false;
+        }
+
         audio_bin = gst_bin_new(NULL);
         if (!audio_bin) {
             return false;
@@ -20,7 +35,7 @@ struct AudioSource {
             return false;
         }
 
-        GstElement* capture = gst_device_create_element(device, NULL);
+        GstElement* capture = gst_device_create_element(settings.device, NULL);
         if (!capture) {
             return false;
         }
@@ -64,6 +79,12 @@ struct AudioSource {
         }
 
         gst_object_unref(source_pad);
+
+        gst_pad_add_probe(source_ghost,
+            GST_PAD_PROBE_TYPE_BUFFER,
+            buffer_probe,
+            this,
+            NULL);
 
         audio_tee = gst_element_factory_make("tee", NULL);
         if (!audio_tee) {

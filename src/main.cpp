@@ -27,6 +27,44 @@ static const gchar* get_device_id(const GstStructure* props) {
     return id;
 }
 
+void update_output_status(std::map<std::string, std::unique_ptr<MediaStream>>& cur_streams) {
+    for (auto& cs_it : cur_streams) {
+        auto& stream = cs_it.second;
+
+        bool update = false;
+
+        StreamStatus status;
+        if (stream->video) {
+            uint32_t frame_count = stream->video->frame_count.exchange(0, std::memory_order_relaxed);
+            if (frame_count > 10) {
+                status.video_status = SourceStatus::kSuccess;
+                update = true;
+            }
+        }
+
+        if (stream->audio) {
+            uint32_t frame_count = stream->audio->frame_count.exchange(0, std::memory_order_relaxed);
+            if (frame_count > 10) {
+                status.audio_status = SourceStatus::kSuccess;
+                update = true;
+            }
+        }
+
+        for (auto& outputs_it : stream->outputs) {
+            auto& output = outputs_it.second;
+            uint32_t packet_count = output->packet_count.exchange(0, std::memory_order_relaxed);
+            if (packet_count > 10) {
+                status.output_status[outputs_it.first] = OutputStatus::kSuccess;
+                update = true;
+            }
+        }
+
+        if (update) {
+            ConfigManager::getInstance().updateStreamStatus(cs_it.first, status);
+        }
+    }
+}
+
 int main() {
     SetConsoleOutputCP(CP_UTF8);
 
@@ -125,11 +163,25 @@ int main() {
             gst_message_unref(dev_monitor_msg);
         }
 
-
         auto cs_it = cur_streams.begin();
         while (cs_it != cur_streams.end()) {
             auto& stream = cs_it->second;
             if (!stream->ProcessMessage()) {
+                StreamStatus status;
+                if (stream->video) {
+                    status.video_status = stream->video->status;
+                }
+
+                if (stream->audio) {
+                    status.audio_status = stream->audio->status;
+                }
+
+                for (auto& it : stream->outputs) {
+                    auto& output = it.second;
+                    status.output_status[it.first] = output->status;
+                }
+
+                ConfigManager::getInstance().updateStreamStatus(cs_it->first, status);
                 cs_it = cur_streams.erase(cs_it);
                 continue;
             }
@@ -143,6 +195,38 @@ int main() {
             std::map<std::string, StreamSettings> new_streams;
             ConfigManager::getInstance().getStreams(new_streams);
 
+            // handle disabled streams
+            auto ns_it = new_streams.begin();
+            while (ns_it != new_streams.end()) {
+                auto& settings = ns_it->second;
+
+                if (!settings.isEnabled()) {
+                    ns_it = new_streams.erase(ns_it);
+                    continue;
+                }
+
+                bool source_available = false;
+                if (settings.video) {
+                    if (settings.video->device) {
+                        source_available = true;
+                    }
+                }
+
+                if (settings.audio) {
+                    if (settings.audio->device) {
+                        source_available = true;
+                    }
+                }
+
+                if (!source_available) {
+                    ns_it = new_streams.erase(ns_it);
+                    continue;
+                }
+
+                ns_it++;
+            }
+
+            // sync existed streams
             auto cs_it = cur_streams.begin();
             while (cs_it != cur_streams.end()) { 
                 auto ns_it = new_streams.find(cs_it->first);
@@ -152,51 +236,58 @@ int main() {
                     continue;
                 }
 
+                if (!ns_it->second.isEnabled()) {
+                    // remove whole stream
+                    cs_it = cur_streams.erase(cs_it);
+
+                    // remove disabled stream
+                    new_streams.erase(ns_it);
+                    continue;
+                }
+
                 const auto& settings = ns_it->second;
                 auto& media_stream = cs_it->second;
 
-                if (settings.video) {
-                    auto deivce = ConfigManager::getInstance().getVideoDevice(settings.video->device);
-                    if (deivce) {
-                        if (media_stream->video && media_stream->video->settings != *settings.video) {
-                            if (!media_stream->removeVideo()) {
-                                cs_it = cur_streams.erase(cs_it);
-                                continue;
-                            }
+                if (settings.video && settings.video->device) {
+                    if (!media_stream->video) {
+                        // video settings added
+                        if (!media_stream->addVideo(*settings.video)) {
+                            cs_it = cur_streams.erase(cs_it);
+                            continue;
                         }
-
-                        if (!media_stream->video) {
-                            if (!media_stream->addVideo(*settings.video, deivce)) {
-                                cs_it = cur_streams.erase(cs_it);
-                                continue;
-                            }
+                    } else if (media_stream->video->settings != *settings.video) {
+                        // video settings changed
+                        if (!media_stream->removeVideo()) {
+                            cs_it = cur_streams.erase(cs_it);
+                            continue;
                         }
                     }
+
                 } else if (media_stream->video) {
+                    // video settings removed
                     if (!media_stream->removeVideo()) {
                         cs_it = cur_streams.erase(cs_it);
                         continue;
                     }
                 }
 
-                if (settings.audio) {
-                    auto deivce = ConfigManager::getInstance().getVideoDevice(settings.audio->device);
-                    if (deivce) {
-                        if (media_stream->audio && media_stream->audio->settings != *settings.audio) {
-                            if (!media_stream->removeAudio()) {
-                                cs_it = cur_streams.erase(cs_it);
-                                continue;
-                            }
+                if (settings.audio && settings.audio->device) {
+                    if (!media_stream->audio) {
+                        // audio settings added
+                        if (!media_stream->addAudio(*settings.audio)) {
+                            cs_it = cur_streams.erase(cs_it);
+                            continue;
                         }
-
-                        if (!media_stream->audio) {
-                            if (!media_stream->addAudio(*settings.audio, deivce)) {
-                                cs_it = cur_streams.erase(cs_it);
-                                continue;
-                            }
+                    } else if (media_stream->audio->settings != *settings.audio) {
+                        // audio settings changed
+                        if (!media_stream->removeAudio()) {
+                            cs_it = cur_streams.erase(cs_it);
+                            continue;
                         }
                     }
+
                 } else if (media_stream->audio) {
+                    // audio settings removed
                     if (!media_stream->removeAudio()) {
                         cs_it = cur_streams.erase(cs_it);
                         continue;
@@ -207,34 +298,32 @@ int main() {
                     cs_it = cur_streams.erase(cs_it);
                     continue;
                 }
-
                 new_streams.erase(ns_it);
                 cs_it++;
             }
 
+            // create new streams
             for (const auto& ns_it : new_streams) {
                 const auto& settings = ns_it.second;
+                if (!settings.isEnabled()) {
+                    // skip disabled stream
+                    continue;
+                }
 
-                auto media_stream = std::make_unique<MediaStream>();
+                auto media_stream = std::make_unique<MediaStream>(settings.id);
                 if (!media_stream->create()) {
                     continue;
                 }
 
-                if (settings.video) {
-                    auto deivce = ConfigManager::getInstance().getVideoDevice(settings.video->device);
-                    if (deivce) {
-                        if (!media_stream->addVideo(*settings.video, deivce)) {
-                            continue;
-                        }
+                if (settings.video && settings.video->device) {
+                    if (!media_stream->addVideo(*settings.video)) {
+                        continue;
                     }
                 }
 
-                if (settings.audio) {
-                    auto deivce = ConfigManager::getInstance().getAudioDevice(settings.audio->device);
-                    if (deivce) {
-                        if (!media_stream->addAudio(*settings.audio, deivce)) {
-                            continue;
-                        }
+                if (settings.audio && settings.audio->device) {
+                    if (!media_stream->addAudio(*settings.audio)) {
+                        continue;
                     }
                 }
 
@@ -250,6 +339,8 @@ int main() {
 
                 cur_streams[ns_it.first] = std::move(media_stream);
             }
+
+            update_output_status(cur_streams);
         }
     }
 

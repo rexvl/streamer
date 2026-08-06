@@ -1,13 +1,26 @@
 #pragma once
+#include <atomic>
 
 struct MediaOutput {
     GstElement* pipeline;
     OutputSettings settings;
     GstElement* output_bin{nullptr};
     GstElement* mux{nullptr};
+    std::atomic<uint32_t> packet_count{ 0 };
+    OutputStatus status{ OutputStatus::kSuccess };
 
     MediaOutput(GstElement* p, const OutputSettings& s) :
         pipeline(p), settings(s) {
+    }
+
+    static GstPadProbeReturn sink_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
+        auto self = static_cast<MediaOutput*>(user_data);
+
+        if (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) {
+            self->packet_count++;
+        }
+
+        return GST_PAD_PROBE_OK;
     }
 
     bool create() {
@@ -43,6 +56,14 @@ struct MediaOutput {
             if (!gst_element_link(mux, sink)) {
                 return false;
             }
+
+            GstPad* pad = gst_element_get_static_pad(sink, "sink");
+            if (!pad) {
+                return false;
+            }
+
+            gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, sink_probe, this, NULL);
+            gst_object_unref(pad);
 
             return true;
         }

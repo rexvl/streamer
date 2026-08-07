@@ -54,12 +54,29 @@ $(function(){
     }
   }
 
-  function statusToBadge(st){
+  function statusToBadge(st, stream){
+    // Determine UI status using runtime status (st) and configured stream settings (stream)
+    // If no runtime status, treat as STOPPED
     if (!st) return 'STOPPED';
-    const outs = st.outputs || [];
-    if (outs.some(o => o.status === 'success')) return 'LIVE';
+
+    const outsStatus = st.outputs || [];
+
+    // If any output reports success -> LIVE
+    if (outsStatus.some(o => o.status === 'success')) return 'LIVE';
+
+    // If stream config exists and has no enabled outputs -> STOPPED
+    if (stream) {
+      const cfgOuts = stream.outputs || [];
+      const hasEnabled = cfgOuts.some(o => (o.enabled === undefined) ? true : !!o.enabled);
+      if (!hasEnabled) return 'STOPPED';
+    }
+
+    // If any output failed -> ERROR
+    if (outsStatus.some(o => o.status === 'fail')) return 'ERROR';
+
+    // If sources are OK but outputs are not yet successful -> STARTING
     if (st.video_status === 'success' || st.audio_status === 'success') return 'STARTING';
-    if (st.video_status === 'fail' || st.audio_status === 'fail') return 'ERROR';
+
     return 'STOPPED';
   }
 
@@ -72,7 +89,7 @@ $(function(){
     Object.values(streamsMap).forEach(s => {
       const id = String(s.id);
       const st = statusMap[id];
-      const status = statusToBadge(st);
+      const status = statusToBadge(st, s);
       const $it = $('<li/>').addClass('stream-item').attr('data-id', id);
       if (id === activeStreamId) $it.addClass('active');
       const $dot = $('<span/>').addClass('dot');
@@ -99,7 +116,7 @@ $(function(){
       const st = statusMap[id] || {};
       const tr = $('<tr/>');
       const name = id;
-      const status = statusToBadge(st);
+      const status = statusToBadge(st, s);
       const uptime = '-';
       const resolution = (s.video && (s.video.width || s.video.height)) ? `${s.video.width||"-"}x${s.video.height||"-"}@${s.video.fps_n||0}` : '-';
       const bitrate = '-';
@@ -136,7 +153,7 @@ $(function(){
       const st = statusMap[id] || {};
       const $sb = $('#status-bar').empty();
       const $dot = $('<span/>').addClass('dot');
-      const uiStatus = statusToBadge(st);
+      const uiStatus = statusToBadge(st, s);
       if (uiStatus==='LIVE') $dot.addClass('status-live'); else if (uiStatus==='STARTING') $dot.addClass('status-starting'); else if (uiStatus==='ERROR') $dot.addClass('status-error'); else $dot.addClass('status-stopped');
       $sb.append($dot).append($('<span/>').addClass('stream-name').text(`${uiStatus} ${id}`));
       $sb.append($('<span/>').addClass('status-item').text(`Resolution: ${s.video? `${s.video.width||""}x${s.video.height||""}`: '-'}`));
@@ -160,6 +177,62 @@ $(function(){
         await renderStreamView(id);
       });
 
+      // populate video numeric inputs and codec/bitrate controls
+      // values from s.video: width,height,fps_n,fps_d,codec,bitrate
+      $('#video-width').val(s.video && s.video.width ? s.video.width : '');
+      $('#video-height').val(s.video && s.video.height ? s.video.height : '');
+      // fps: single text field accepts integer (30) or fraction (30000/1001)
+      let fpsVal = '';
+      if (s.video && s.video.fps_n) {
+        if (s.video.fps_d && s.video.fps_d !== 1) fpsVal = `${s.video.fps_n}/${s.video.fps_d}`;
+        else fpsVal = `${s.video.fps_n}`;
+      }
+      $('#video-fps').val(fpsVal);
+      $('#video-codec').val(s.video && s.video.codec ? s.video.codec : 'avc');
+      $('#video-bitrate').val(s.video && s.video.bitrate ? s.video.bitrate : '');
+
+      // attach handlers: update stream when any video setting changes
+      $('#video-width, #video-height, #video-fps, #video-codec, #video-bitrate').off('change').on('change', async function(){
+        s.video = s.video || {};
+        const w = parseInt($('#video-width').val()) || 0;
+        const h = parseInt($('#video-height').val()) || 0;
+        const fpsText = String($('#video-fps').val() || '').trim();
+        const codec = $('#video-codec').val();
+        const vb = parseInt($('#video-bitrate').val()) || 0;
+
+        if (w > 0) s.video.width = w; else delete s.video.width;
+        if (h > 0) s.video.height = h; else delete s.video.height;
+
+        // parse fps: integer or fraction
+        if (fpsText.indexOf('/') !== -1) {
+          const parts = fpsText.split('/').map(p => parseInt(p.trim(), 10));
+          if (parts.length === 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1]) && parts[0] > 0 && parts[1] > 0) {
+            s.video.fps_n = parts[0];
+            s.video.fps_d = parts[1];
+          } else {
+            delete s.video.fps_n;
+            delete s.video.fps_d;
+          }
+        } else {
+          const fn = parseInt(fpsText, 10);
+          if (Number.isFinite(fn) && fn > 0) {
+            s.video.fps_n = fn;
+            s.video.fps_d = 1;
+          } else {
+            delete s.video.fps_n;
+            delete s.video.fps_d;
+          }
+        }
+
+        if (codec) s.video.codec = codec;
+        if (vb > 0) s.video.bitrate = vb; else delete s.video.bitrate;
+
+        const payload = buildStreamPayload(s);
+        await apiPut(`/streams/${id}`, payload);
+        await refreshAll();
+        await renderStreamView(id);
+      });
+
       // audio
       const $audio = $('#audio-list').empty();
       const curAudio = s.audio && s.audio.device ? s.audio.device : '';
@@ -172,6 +245,32 @@ $(function(){
       $asel.off('change').on('change', async ()=>{
         const newDevice = $asel.val();
         if (newDevice) s.audio = Object.assign(s.audio||{}, { device: newDevice }); else s.audio = undefined;
+        const payload = buildStreamPayload(s);
+        await apiPut(`/streams/${id}`, payload);
+        await refreshAll();
+        await renderStreamView(id);
+      });
+
+      // populate audio controls
+      $('#audio-samplerate').val(s.audio && s.audio.sampleRate ? s.audio.sampleRate : '48000');
+      $('#audio-channels').val(s.audio && s.audio.channels ? s.audio.channels : '2');
+      $('#audio-codec').val(s.audio && s.audio.codec ? s.audio.codec : 'aac');
+      $('#audio-bitrate').val(s.audio && s.audio.bitrate ? Math.round(s.audio.bitrate/1000) : '128');
+
+      // audio change handlers
+      $('#audio-samplerate, #audio-channels, #audio-codec, #audio-bitrate').off('change').on('change', async function(){
+        s.audio = s.audio || {};
+        const sr = parseInt($('#audio-samplerate').val()) || 48000;
+        const ch = parseInt($('#audio-channels').val()) || 2;
+        const codec = $('#audio-codec').val();
+        const ab = parseInt($('#audio-bitrate').val()) || 128;
+
+        s.audio.sampleRate = sr;
+        s.audio.channels = ch;
+        s.audio.codec = codec;
+        // server expects bitrate in bits/sec
+        s.audio.bitrate = ab * 1000;
+
         const payload = buildStreamPayload(s);
         await apiPut(`/streams/${id}`, payload);
         await refreshAll();

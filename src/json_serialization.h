@@ -191,7 +191,8 @@ inline
 void to_json(nlohmann::json& j, const OutputSettings& s) {
     j = nlohmann::json{
         {"type", s.type},
-        {"url", s.url}
+        {"url", s.url},
+        {"enabled", s.enabled}
     };
 }
 

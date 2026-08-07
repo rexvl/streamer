@@ -47,11 +47,68 @@
             <div class="card" id="video-settings">
               <h3>Video</h3>
               <div id="sources-list"></div>
+
               <div class="video-preview">Preview (16:9)</div>
+
+              <div class="form-row small-compact">
+                <label class="form-label">Width</label>
+                <input id="video-width" type="number" class="form-control" />
+              </div>
+              <div class="form-row small-compact">
+                <label class="form-label">Height</label>
+                <input id="video-height" type="number" class="form-control" />
+              </div>
+              <div class="form-row small-compact">
+                <label class="form-label">FPS</label>
+                <input id="video-fps" type="text" class="form-control" placeholder="e.g. 30 or 30000/1001" />
+              </div>
+              <div class="form-row small-compact">
+                <label class="form-label">Codec</label>
+                <select id="video-codec" class="form-control">
+                  <option value="avc">AVC (H.264)</option>
+                  <option value="hevc">HEVC (H.265)</option>
+                </select>
+              </div>
+              <div class="form-row small-compact">
+                <label class="form-label">Bitrate (kbps)</label>
+                <input id="video-bitrate" type="number" class="form-control" />
+              </div>
             </div>
             <div class="card" id="audio-settings">
               <h3>Audio</h3>
               <div id="audio-list"></div>
+
+              <div class="form-row small-compact">
+                <label class="form-label">Sample rate</label>
+                <select id="audio-samplerate" class="form-control">
+                  <option value="48000">48000</option>
+                  <option value="44100">44100</option>
+                  <option value="32000">32000</option>
+                  <option value="22050">22050</option>
+                </select>
+              </div>
+              <div class="form-row small-compact">
+                <label class="form-label">Channels</label>
+                <select id="audio-channels" class="form-control">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                </select>
+              </div>
+              <div class="form-row small-compact">
+                <label class="form-label">Codec</label>
+                <select id="audio-codec" class="form-control">
+                  <option value="aac">AAC</option>
+                </select>
+              </div>
+              <div class="form-row small-compact">
+                <label class="form-label">Bitrate (kbps)</label>
+                <select id="audio-bitrate" class="form-control">
+                  <option value="64">64</option>
+                  <option value="96">96</option>
+                  <option value="128">128</option>
+                </select>
+              </div>
+
             </div>
           </div>
           <div class="right-col">

@@ -404,7 +404,7 @@ $(function(){
     } catch (e) { console.error('create stream', e); alert('Create failed'); }
   });
 
-  $('#btn-dashboard').on('click', ()=>{ showDashboard(); });
+
 
   // initial load and polling
   refreshAll();

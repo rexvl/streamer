@@ -10,10 +10,7 @@
 #include <cstdio>
 #include <deque>
 
-MediaStream::MediaStream(const std::string& id) : id_(id) {
-}
-
-bool MediaStream::create() {
+bool MediaStream::create(const StreamSettings& settings) {
     pipeline = gst_pipeline_new(nullptr);
     if (!pipeline) {
         return false;
@@ -24,12 +21,33 @@ bool MediaStream::create() {
         return false;
     }
 
+    if (settings.video && settings.video->device) {
+        if (!addVideo(*settings.video)) {
+            return false;
+        }
+    }
+
+    if (settings.audio && settings.audio->device) {
+        if (!addAudio(*settings.audio)) {
+            return false;
+        }
+    }
+
+    if (!syncOutputs(settings.outputs)) {
+        return false;
+    }
+
     return true;
 }
 
 bool MediaStream::start() {
     auto status = gst_element_set_state(GST_ELEMENT(pipeline), GST_STATE_PLAYING);
-    return status != GST_STATE_CHANGE_FAILURE;
+    if (status == GST_STATE_CHANGE_FAILURE) {
+        ProcessError();
+        return false;
+    }
+
+    return true;
 }
 
 bool MediaStream::addVideo(const VideoSettings& settings) {
@@ -56,10 +74,6 @@ bool MediaStream::addAudio(const AudioSettings& settings) {
     }
 
     return true;
-}
-
-bool MediaStream::IsSourcesEmpty() {
-    return (!video) && (!audio);
 }
 
 bool MediaStream::addOutput(const std::string& id, const OutputSettings& settings) {
@@ -152,8 +166,12 @@ bool MediaStream::onError(GstElement* src) {
     return false;
 }
 
-bool MediaStream::ProcessMessage() {
-    GstMessage* msg = gst_bus_pop_filtered(bus, static_cast<GstMessageType>(GST_MESSAGE_INFO | GST_MESSAGE_ERROR | GST_MESSAGE_EOS | GST_MESSAGE_STATE_CHANGED));
+bool MediaStream::ProcessError() {
+    return ProcessMessage(GST_MESSAGE_ERROR);
+}
+
+bool MediaStream::ProcessMessage(uint64_t mask) {
+    GstMessage* msg = gst_bus_pop_filtered(bus, static_cast<GstMessageType>(mask));
     if (!msg) {
         return true;
     }
@@ -218,8 +236,7 @@ bool MediaStream::ProcessMessage() {
             gst_element_state_get_name(new_state),
             gst_element_state_get_name(pending));
 
-        if (obj == GST_OBJECT(pipeline) &&
-            GST_STATE_PLAYING == new_state) {
+        if (obj == GST_OBJECT(pipeline) && GST_STATE_PLAYING == new_state) {
             printf("!!!PLAYING!!!\n");
             playing_ = true;
         }
@@ -233,6 +250,68 @@ bool MediaStream::ProcessMessage() {
 
     gst_message_unref(msg);
     return true;
+}
+
+bool MediaStream::update(const StreamSettings& settings) {
+    if (settings.video && settings.video->device) {
+        if (!video) {
+            // video settings added
+            if (!addVideo(*settings.video)) {
+                return false;
+            }
+        } else if (video->settings != *settings.video) {
+            // video settings changed
+            if (!removeVideo()) {
+                return false;
+            }
+        }
+
+    } else if (video) {
+        // video settings removed
+        if (!removeVideo()) {
+            return false;
+        }
+    }
+
+    if (settings.audio && settings.audio->device) {
+        if (!audio) {
+            // audio settings added
+            if (!addAudio(*settings.audio)) {
+                return false;
+            }
+        } else if (audio->settings != *settings.audio) {
+            // audio settings changed
+            if (!removeAudio()) {
+                return false;
+            }
+        }
+    } else if (audio) {
+        // audio settings removed
+        if (!removeAudio()) {
+            return false;
+        }
+    }
+
+    return syncOutputs(settings.outputs);
+}
+
+
+StreamStatus MediaStream::getStatus() {
+    StreamStatus status;
+
+    if (video) {
+        status.video_status = video->status;
+    }
+
+    if (audio) {
+        status.audio_status = audio->status;
+    }
+
+    for (auto& it : outputs) {
+        status.output_status[it.first] = it.second->status;
+    }
+
+    return status;
 }
 
 MediaStream::~MediaStream() {
@@ -249,6 +328,4 @@ MediaStream::~MediaStream() {
         gst_element_get_state(pipeline, NULL, NULL, GST_CLOCK_TIME_NONE);
         gst_object_unref(pipeline);
     }
-
-    //ConfigManager::getInstance().setStreamStatus(id_, status_);
 }

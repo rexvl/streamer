@@ -10,9 +10,7 @@ class VideoSource;
 class AudioSource;
 struct MediaOutput;
 
-
 struct MediaStream {
-    const std::string id_;
     GstElement* pipeline{nullptr};
     GstBus *bus{nullptr};
     std::unique_ptr<VideoSource> video;
@@ -21,10 +19,12 @@ struct MediaStream {
     bool playing_{ false };
     int inactivity_count_{ 0 };
 
-    MediaStream(const std::string& id);
+    MediaStream() = default;
 
-    bool create();
+    bool create(const StreamSettings& settings);
     bool start();
+
+    bool update(const StreamSettings& settings);
     bool addVideo(const VideoSettings& settings);
     bool addAudio(const AudioSettings& settings);
     bool IsSourcesEmpty();
@@ -34,7 +34,10 @@ struct MediaStream {
     bool removeAudio();
     bool syncOutputs(std::map<std::string, OutputSettings> settings);
     bool onError(GstElement* src);
-    bool ProcessMessage();
+    bool ProcessMessage(uint64_t mask = GST_MESSAGE_INFO | GST_MESSAGE_ERROR | GST_MESSAGE_EOS | GST_MESSAGE_STATE_CHANGED);
+    bool ProcessError();
+
+    StreamStatus getStatus();
 
     ~MediaStream();
 };

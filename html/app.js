@@ -15,6 +15,16 @@ $(function(){
     return r.json();
   }
 
+  function sourceStatusToClass(s) {
+    // s expected to be string: 'success','unavailable','fail','disabled','unknown'
+    if (!s) return 'status-stopped';
+    if (s === 'success') return 'status-live';
+    if (s === 'unavailable') return 'status-starting';
+    if (s === 'fail') return 'status-error';
+    if (s === 'disabled') return 'status-stopped';
+    return 'status-stopped';
+  }
+
   async function apiPost(path, body) {
     const r = await fetch(path, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     return r;
@@ -158,6 +168,19 @@ $(function(){
       $sb.append($dot).append($('<span/>').addClass('stream-name').text(`${uiStatus} ${id}`));
       $sb.append($('<span/>').addClass('status-item').text(`Resolution: ${s.video? `${s.video.width||""}x${s.video.height||""}`: '-'}`));
       $sb.append($('<span/>').addClass('status-item').text(`Outputs: ${(s.outputs||[]).length}`));
+
+      // set video source status dot in the video card header
+      const vclass = sourceStatusToClass(st.video_status);
+      const $vdot = $('#video-dot');
+      if ($vdot.length) {
+        $vdot.removeClass('status-live status-starting status-error status-stopped').addClass(vclass);
+      }
+      // set audio source status dot in the audio card header
+      const aclass = sourceStatusToClass(st.audio_status);
+      const $adot = $('#audio-dot');
+      if ($adot.length) {
+        $adot.removeClass('status-live status-starting status-error status-stopped').addClass(aclass);
+      }
 
       // video device select
       const $sources = $('#sources-list').empty();

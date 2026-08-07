@@ -1,552 +1,291 @@
-async function loadStreams()
-{
-    const tbody = document.getElementById("streams");
+/* app.js - jQuery UI integrated with streamer REST API */
 
-    tbody.innerHTML = "";
+$(function(){
+  const POLL_MS = 2000;
 
+  let streamsMap = {}; // id -> StreamSettings
+  let statusMap = {};  // id -> StreamStatus
+  let videoDevices = [];
+  let audioDevices = [];
+  let activeStreamId = null;
 
-    try
-    {
-        const [videoList, audioList, streams] = await Promise.all([
-            fetch('/devices/video').then(r => r.json()),
-            fetch('/devices/audio').then(r => r.json()),
-            fetch('/streams').then(r => r.json())
-        ]);
+  async function apiGet(path) {
+    const r = await fetch(path);
+    if (!r.ok) throw new Error(`GET ${path} failed: ${r.status}`);
+    return r.json();
+  }
 
-        // build id->name maps
-        const videoMap = {};
-        for (const d of videoList) {
-            if (d.id) videoMap[d.id] = d.name || d.id;
-        }
+  async function apiPost(path, body) {
+    const r = await fetch(path, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    return r;
+  }
 
-        const audioMap = {};
-        for (const d of audioList) {
-            if (d.id) audioMap[d.id] = d.name || d.id;
-        }
-        // populate device selects
-        populateDeviceSelect('video-select', videoList);
-        populateDeviceSelect('audio-select', audioList);
-        // show/hide audio and video params depending on selected device
-        updateAudioParamsVisibility();
-        updateVideoParamsVisibility();
-        // show/hide video params depending on selected device
-        updateVideoParamsVisibility();
+  async function apiPut(path, body) {
+    const r = await fetch(path, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    return r;
+  }
 
-        for (const stream of streams)
-        {
-            addStreamRow(stream, videoMap, audioMap);
-        }
+  async function apiDelete(path) {
+    const r = await fetch(path, { method: 'DELETE' });
+    return r;
+  }
 
-    }
-    catch (e)
-    {
-        tbody.innerHTML =
-        `<tr>
-                <td colspan="4">
-                    Error: ${e}
-                </td>
-             </tr>`;
-    }
-}
-
-
-
-function addStreamRow(stream, videoMap, audioMap)
-{
-    const tbody = document.getElementById("streams");
-
-
-    const row = document.createElement("tr");
-
-
-    let outputs = "";
-
-    for (const output of stream.outputs ?? [])
-    {
-        outputs += `
-            ${output.url}
-            <br>
-        `;
-    }
-
-
-    row.innerHTML = `
-
-        
-        <td>
-            ${
-                stream.video
-                ?
-                `
-                ${videoMap && videoMap[stream.video.device] ? videoMap[stream.video.device] : stream.video.device}
-                <br>
-                ${stream.video.codec || ''} ${stream.video.width ? (' - ' + stream.video.width + 'x' + stream.video.height) : ''}
-                ${stream.video.fps_n ? (' - ' + stream.video.fps_n + '/' + stream.video.fps_d + ' fps') : ''}
-                ${stream.video.bitrate ? (' - ' + stream.video.bitrate + ' kbps') : ''}
-                `
-                :
-                "disabled"
-            }
-        </td>
-
-
-        <td>
-            ${
-                stream.audio
-                ?
-                `
-                ${audioMap && audioMap[stream.audio.device] ? audioMap[stream.audio.device] : stream.audio.device}
-                <br>
-                ${stream.audio.codec || ''} ${stream.audio.sampleRate ? (' - ' + stream.audio.sampleRate + ' Hz') : ''}
-                ${stream.audio.channels ? (' - ' + stream.audio.channels + ' ch') : ''}
-                ${stream.audio.bitrate ? (' - ' + Math.round(stream.audio.bitrate / 1000) + ' kbps') : ''}
-                `
-                :
-                "disabled"
-            }
-        </td>
-
-
-        <td>
-            ${outputs || "-"}
-        </td>
-
-
-        <td>
-            <button
-                class="btn"
-                onclick="editStream('${stream.id}')">
-                Edit
-            </button>
-            <button
-                class="danger"
-                onclick="deleteStream('${stream.id}')"
-                style="margin-left:8px">
-                Delete
-            </button>
-        </td>
-
-    `;
-
-
-    tbody.appendChild(row);
-}
-
-
-
-async function deleteStream(id)
-{
-    if (!confirm(
-        "Delete stream " + id + "?"
-    ))
-        return;
-
-
-    await fetch(
-        "/streams/" + id,
-        {
-            method: "DELETE"
-        }
-    );
-
-
-    loadStreams();
-}
-// Expose functions to global window for inline onclick handlers
-// (some environments may not bind function declarations to window automatically)
-window.editStream = typeof editStream !== 'undefined' ? editStream : undefined;
-window.cancelEdit = typeof cancelEdit !== 'undefined' ? cancelEdit : undefined;
-window.deleteStream = typeof deleteStream !== 'undefined' ? deleteStream : undefined;
-window.addOutputRow = typeof addOutputRow !== 'undefined' ? addOutputRow : undefined;
-window.removeOutputRow = typeof removeOutputRow !== 'undefined' ? removeOutputRow : undefined;
-window.createStream = typeof createStream !== 'undefined' ? createStream : undefined;
-
-let currentEditingId = null;
-
-async function editStream(id) {
+  async function refreshAll(){
     try {
-        const resp = await fetch('/streams/' + id);
-        if (resp.status !== 200) {
-            alert('Failed to load stream for edit');
-            return;
-        }
+      const [streams, statuses, vdev, adev] = await Promise.all([
+        apiGet('/streams'),
+        apiGet('/status'),
+        apiGet('/devices/video'),
+        apiGet('/devices/audio')
+      ]);
 
-        const stream = await resp.json();
+      streamsMap = {};
+      (streams || []).forEach(s => { streamsMap[String(s.id)] = s; });
 
-        // fill form
-        currentEditingId = id;
+      statusMap = {};
+      (statuses || []).forEach(st => { statusMap[String(st.id)] = st; });
 
-        // video
-        const videoSel = document.getElementById('video-select');
-        if (videoSel) videoSel.value = stream.video ? stream.video.device : '';
-        updateVideoParamsVisibility();
-        if (stream.video) {
-            const wEl = document.getElementById('video-width');
-            const hEl = document.getElementById('video-height');
-            const fpsEl = document.getElementById('video-fps');
-            const vcodecEl = document.getElementById('video-codec');
-            const vbEl = document.getElementById('video-bitrate');
+      videoDevices = vdev || [];
+      audioDevices = adev || [];
 
-            if (wEl) wEl.value = stream.video.width || '';
-            if (hEl) hEl.value = stream.video.height || '';
-            if (vcodecEl) vcodecEl.value = stream.video.codec || 'avc';
-            if (vbEl) vbEl.value = stream.video.bitrate || '';
+      renderAll();
+    } catch (e) {
+      console.error('refreshAll', e);
+    }
+  }
 
-            if (fpsEl) {
-                if (stream.video.fps_n && stream.video.fps_d) {
-                    if (stream.video.fps_d === 1) fpsEl.value = String(stream.video.fps_n);
-                    else fpsEl.value = stream.video.fps_n + '/' + stream.video.fps_d;
-                } else {
-                    fpsEl.value = '';
-                }
-            }
-        }
+  function statusToBadge(st){
+    if (!st) return 'STOPPED';
+    const outs = st.outputs || [];
+    if (outs.some(o => o.status === 'success')) return 'LIVE';
+    if (st.video_status === 'success' || st.audio_status === 'success') return 'STARTING';
+    if (st.video_status === 'fail' || st.audio_status === 'fail') return 'ERROR';
+    return 'STOPPED';
+  }
 
-        // audio
-        const audioSel = document.getElementById('audio-select');
-        if (audioSel) audioSel.value = stream.audio ? stream.audio.device : '';
-        updateAudioParamsVisibility();
-        if (stream.audio) {
-            const srEl = document.getElementById('audio-samplerate');
-            const chEl = document.getElementById('audio-channels');
-            const acodecEl = document.getElementById('audio-codec');
-            const abrEl = document.getElementById('audio-bitrate');
+  function renderSidebar(){
+    const $list = $('#stream-list').empty();
+    const $dash = $('<li/>').addClass('stream-item').attr('data-id','__dashboard__').append($('<div/>').text('\uD83D\uDCCA Dashboard'));
+    $dash.on('click', ()=> showDashboard());
+    $list.append($dash);
 
-            if (srEl) srEl.value = stream.audio.sampleRate || srEl.value;
-            if (chEl) chEl.value = stream.audio.channels || chEl.value;
-            if (acodecEl) acodecEl.value = stream.audio.codec || acodecEl.value;
-            // server stores bitrate in bits/sec (e.g. 128000) — convert to kbps for UI
-            if (abrEl) abrEl.value = stream.audio.bitrate ? Math.round(stream.audio.bitrate / 1000) : abrEl.value;
-        }
+    Object.values(streamsMap).forEach(s => {
+      const id = String(s.id);
+      const st = statusMap[id];
+      const status = statusToBadge(st);
+      const $it = $('<li/>').addClass('stream-item').attr('data-id', id);
+      if (id === activeStreamId) $it.addClass('active');
+      const $dot = $('<span/>').addClass('dot');
+      if (status === 'LIVE') $dot.addClass('status-live');
+      else if (status === 'STARTING') $dot.addClass('status-starting');
+      else if (status === 'ERROR') $dot.addClass('status-error');
+      else $dot.addClass('status-stopped');
 
-        // outputs
-        const container = document.getElementById('outputs-container');
-        if (container) {
-            container.innerHTML = '';
-            const outs = stream.outputs || [];
-            if (outs.length === 0) {
-                addOutputRow();
-            } else {
-                for (const o of outs) {
-                    const row = document.createElement('div');
-                    row.className = 'output-row';
-                    row.innerHTML = `
-                        <select class="output-type">
-                            <option value="rtsp">RTSP</option>
-                            <option value="rtmp">RTMP</option>
-                        </select>
-                        <input class="output-url" type="text" placeholder="url (e.g. rtmp://...)">
-                        <button type="button" class="btn small" onclick="removeOutputRow(this)">Remove</button>
-                    `;
-                    container.appendChild(row);
-                    const typeEl = row.querySelector('.output-type');
-                    const urlEl = row.querySelector('.output-url');
-                    if (typeEl) typeEl.value = o.type || 'rtsp';
-                    if (urlEl) urlEl.value = o.url || '';
-                }
-            }
-        }
+      const outputsCount = (s.outputs || []).length;
+      const title = id;
+      const meta = `${status} • ${outputsCount} outputs`;
+      const $title = $('<div/>').append($('<div/>').text(title).addClass('stream-name')).append($('<div/>').text(meta).addClass('stream-meta'));
+      $it.append($dot).append($title).on('click', ()=> showStream(id));
+      $list.append($it);
+    });
+  }
 
-        // set UI to edit mode
-        const createBtn = document.getElementById('create-btn');
-        const cancelBtn = document.getElementById('cancel-edit-btn');
-        if (createBtn) createBtn.textContent = 'Save';
-        if (cancelBtn) cancelBtn.style.display = '';
+  function renderDashboard(){
+    const $tbody = $('#dashboard-table tbody').empty();
+    let active = 0;
 
-        // scroll to form
-        document.getElementById('new-stream-section').scrollIntoView({ behavior: 'smooth' });
+    Object.values(streamsMap).forEach(s => {
+      const id = String(s.id);
+      const st = statusMap[id] || {};
+      const tr = $('<tr/>');
+      const name = id;
+      const status = statusToBadge(st);
+      const uptime = '-';
+      const resolution = (s.video && (s.video.width || s.video.height)) ? `${s.video.width||"-"}x${s.video.height||"-"}@${s.video.fps_n||0}` : '-';
+      const bitrate = '-';
+      const outputs = (s.outputs || []).length;
+      const health = st.outputs ? Math.round(((st.outputs.filter(o=>o.status==='success').length) / Math.max(1, st.outputs.length)) * 100) : 0;
+
+      tr.append($('<td/>').text(name));
+      tr.append($('<td/>').text(status));
+      tr.append($('<td/>').text(uptime));
+      tr.append($('<td/>').text(resolution));
+      tr.append($('<td/>').text(bitrate));
+      tr.append($('<td/>').text(outputs));
+      tr.append($('<td/>').append($('<span/>').addClass('health-meter').text(health + '%')));
+      $tbody.append(tr);
+
+      if (status === 'LIVE') active++;
+    });
+
+    $('#metric-active').text(active);
+    $('#metric-bitrate').text('-');
+    $('#metric-dropped').text('-');
+    $('#metric-cpu').text('-');
+    $('#metric-gpu').text('-');
+    $('#metric-net').text('-');
+  }
+
+  async function renderStreamView(id){
+    try {
+      const s = await apiGet(`/streams/${id}`);
+      activeStreamId = id;
+      $('.view').addClass('hidden');
+      $('#stream-view').removeClass('hidden');
+
+      const st = statusMap[id] || {};
+      const $sb = $('#status-bar').empty();
+      const $dot = $('<span/>').addClass('dot');
+      const uiStatus = statusToBadge(st);
+      if (uiStatus==='LIVE') $dot.addClass('status-live'); else if (uiStatus==='STARTING') $dot.addClass('status-starting'); else if (uiStatus==='ERROR') $dot.addClass('status-error'); else $dot.addClass('status-stopped');
+      $sb.append($dot).append($('<span/>').addClass('stream-name').text(`${uiStatus} ${id}`));
+      $sb.append($('<span/>').addClass('status-item').text(`Resolution: ${s.video? `${s.video.width||""}x${s.video.height||""}`: '-'}`));
+      $sb.append($('<span/>').addClass('status-item').text(`Outputs: ${(s.outputs||[]).length}`));
+
+      // video device select
+      const $sources = $('#sources-list').empty();
+      const curVideo = s.video && s.video.device ? s.video.device : '';
+      const $sel = $('<select/>').css('width','100%');
+      $sel.append($('<option/>').attr('value','').text('(none)'));
+      videoDevices.forEach(d => { $sel.append($('<option/>').attr('value',d.id).text(d.name)); });
+      $sel.val(curVideo);
+      $sources.append($('<div/>').append($('<label/>').text('Video device')).append($sel));
+
+      $sel.off('change').on('change', async ()=>{
+        const newDevice = $sel.val();
+        if (newDevice) s.video = Object.assign(s.video||{}, { device: newDevice }); else s.video = undefined;
+        const payload = buildStreamPayload(s);
+        await apiPut(`/streams/${id}`, payload);
+        await refreshAll();
+        await renderStreamView(id);
+      });
+
+      // audio
+      const $audio = $('#audio-list').empty();
+      const curAudio = s.audio && s.audio.device ? s.audio.device : '';
+      const $asel = $('<select/>').css('width','100%');
+      $asel.append($('<option/>').attr('value','').text('(none)'));
+      audioDevices.forEach(d => { $asel.append($('<option/>').attr('value',d.id).text(d.name)); });
+      $asel.val(curAudio);
+      $audio.append($('<div/>').append($('<label/>').text('Audio device')).append($asel));
+
+      $asel.off('change').on('change', async ()=>{
+        const newDevice = $asel.val();
+        if (newDevice) s.audio = Object.assign(s.audio||{}, { device: newDevice }); else s.audio = undefined;
+        const payload = buildStreamPayload(s);
+        await apiPut(`/streams/${id}`, payload);
+        await refreshAll();
+        await renderStreamView(id);
+      });
+
+      // outputs
+      const $outs = $('#outputs-list').empty();
+      (s.outputs || []).forEach((o, idx) => {
+        const $r = $('<div/>').addClass('card').css({'display':'flex','align-items':'center','justify-content':'space-between','margin-bottom':'6px'});
+        const left = $('<div/>').append($('<div/>').text(`${o.type} — ${o.url}`)).append($('<div/>').addClass('stream-meta').text(`enabled: ${o.enabled? 'yes':'no'}`));
+        const $actions = $('<div/>');
+        const $toggle = $('<button/>').addClass('small').text(o.enabled? 'Disable':'Enable').on('click', async ()=>{
+          o.enabled = !o.enabled;
+          const payload = buildStreamPayload(s);
+          await apiPut(`/streams/${id}`, payload);
+          await refreshAll();
+          await renderStreamView(id);
+        });
+        const $remove = $('<button/>').addClass('small danger').text('Remove').on('click', async ()=>{
+          s.outputs.splice(idx,1);
+          const payload = buildStreamPayload(s);
+          await apiPut(`/streams/${id}`, payload);
+          await refreshAll();
+          await renderStreamView(id);
+        });
+        $actions.append($toggle).append($remove);
+        $r.append(left).append($actions);
+        $outs.append($r);
+      });
+
+      $('#btn-add-output').off('click').on('click', async ()=>{
+        const type = prompt('Output type (rtmp or rtsp):', 'rtmp'); if (!type) return;
+        const url = prompt('Output URL:', 'rtmp://'); if (!url) return;
+        s.outputs = s.outputs || [];
+        s.outputs.push({ type: type, url: url, enabled: true });
+        const payload = buildStreamPayload(s);
+        await apiPut(`/streams/${id}`, payload);
+        await refreshAll();
+        await renderStreamView(id);
+      });
+
+      $('#btn-start').off('click').on('click', async ()=>{
+        s.outputs = s.outputs || [];
+        s.outputs.forEach(o=> o.enabled = true);
+        await apiPut(`/streams/${id}`, buildStreamPayload(s));
+        await refreshAll();
+      });
+
+      $('#btn-stop').off('click').on('click', async ()=>{
+        s.outputs = s.outputs || [];
+        s.outputs.forEach(o=> o.enabled = false);
+        await apiPut(`/streams/${id}`, buildStreamPayload(s));
+        await refreshAll();
+      });
+
+      $('#btn-restart').off('click').on('click', async ()=>{
+        s.outputs = s.outputs || [];
+        s.outputs.forEach(o=> o.enabled = false);
+        await apiPut(`/streams/${id}`, buildStreamPayload(s));
+        s.outputs.forEach(o=> o.enabled = true);
+        await apiPut(`/streams/${id}`, buildStreamPayload(s));
+        await refreshAll();
+      });
+
+      $('#btn-delete-stream').off('click').on('click', async ()=>{
+        if (!confirm('Delete stream '+id+'?')) return;
+        await apiDelete(`/streams/${id}`);
+        await refreshAll();
+        showDashboard();
+      });
 
     } catch (e) {
-        alert('Failed to load stream: ' + e);
+      console.error('renderStreamView', e);
     }
-}
+  }
 
-function cancelEdit() {
-    currentEditingId = null;
-    // reset form fields
-    const form = document.getElementById('new-stream-form');
-    if (form) form.reset();
-    // reset selects to (none)
-    const videoSel = document.getElementById('video-select');
-    const audioSel = document.getElementById('audio-select');
-    if (videoSel) videoSel.value = '';
-    if (audioSel) audioSel.value = '';
-    updateAudioParamsVisibility();
-    updateVideoParamsVisibility();
-    // reset outputs to single empty row
-    const container = document.getElementById('outputs-container');
-    if (container) {
-        container.innerHTML = '';
-        addOutputRow();
-    }
-    const createBtn = document.getElementById('create-btn');
-    const cancelBtn = document.getElementById('cancel-edit-btn');
-    if (createBtn) createBtn.textContent = 'Create stream';
-    if (cancelBtn) cancelBtn.style.display = 'none';
-}
+  function buildStreamPayload(s){
+    const payload = {};
+    if (s.video) payload.video = s.video;
+    if (s.audio) payload.audio = s.audio;
+    if (s.outputs) payload.outputs = s.outputs.map(o => ({ type: o.type, url: o.url, enabled: !!o.enabled }));
+    return payload;
+  }
 
+  function renderAll(){ renderSidebar(); renderDashboard(); }
 
+  function showDashboard(){ activeStreamId = null; $('.view').addClass('hidden'); $('#dashboard-view').removeClass('hidden'); renderAll(); }
+  function showStream(id){ activeStreamId = id; $('.view').addClass('hidden'); $('#stream-view').removeClass('hidden'); renderStreamView(id); }
 
-function populateDeviceSelect(selectId, deviceList) {
-    const sel = document.getElementById(selectId);
-    if (!sel) return;
+  // create stream
+  $('#btn-new-stream').on('click', async ()=>{
+    try{
+      const wantsOutput = confirm('Create stream with an initial output?');
+      let body = {};
+      if (wantsOutput) {
+        const type = prompt('Output type (rtmp or rtsp):', 'rtmp'); if(!type) return;
+        const url = prompt('Output URL:', 'rtmp://'); if(!url) return;
+        body.outputs = [{ type: type, url: url, enabled: true }];
+      }
+      const resp = await apiPost('/streams', body);
+      if (resp.status === 201) {
+        await refreshAll();
+        alert('Stream created');
+      } else {
+        const txt = await resp.text(); alert('Create failed: '+resp.status+' '+txt);
+      }
+    } catch (e) { console.error('create stream', e); alert('Create failed'); }
+  });
 
-    // remove existing options except the first (none)
-    while (sel.options.length > 1) sel.remove(1);
+  $('#btn-dashboard').on('click', ()=>{ showDashboard(); });
 
-    for (const d of deviceList) {
-        const opt = document.createElement('option');
-        opt.value = d.id || '';
-        opt.textContent = d.name || d.id || '';
-        sel.appendChild(opt);
-    }
-}
+  // initial load and polling
+  refreshAll();
+  setInterval(refreshAll, POLL_MS);
 
-
-function updateAudioParamsVisibility() {
-    const audioSel = document.getElementById('audio-select');
-    const params = document.querySelector('.audio-params');
-    if (!params || !audioSel) return;
-
-    if (!audioSel.value) {
-        params.style.display = 'none';
-    } else {
-        // ensure grid display
-        params.style.display = 'grid';
-    }
-}
-
-function updateVideoParamsVisibility() {
-    const videoSel = document.getElementById('video-select');
-    const params = document.querySelector('.video-params');
-    if (!params || !videoSel) return;
-
-    if (!videoSel.value) {
-        params.style.display = 'none';
-    } else {
-        params.style.display = 'grid';
-    }
-}
-
-
-async function createStream() {
-    const videoSel = document.getElementById('video-select');
-    const audioSel = document.getElementById('audio-select');
-    const body = {};
-    if (videoSel && videoSel.value) {
-        const vcodecEl = document.getElementById('video-codec');
-        const wEl = document.getElementById('video-width');
-        const hEl = document.getElementById('video-height');
-        const fpsEl = document.getElementById('video-fps');
-        const vbEl = document.getElementById('video-bitrate');
-
-        const videoObj = {
-            device: videoSel.value,
-            codec: vcodecEl ? vcodecEl.value : 'avc'
-        };
-
-        const w = wEl ? Number(wEl.value) : 0;
-        const h = hEl ? Number(hEl.value) : 0;
-        const vb = vbEl ? Number(vbEl.value) : 0;
-
-        if (w > 0) videoObj.width = w;
-        if (h > 0) videoObj.height = h;
-
-        // parse FPS: allow "30" or "30000/1001" or "30/1"
-        if (fpsEl && fpsEl.value) {
-            const v = fpsEl.value.trim();
-            if (v.includes('/')) {
-                const parts = v.split('/');
-                const n = Number(parts[0]) || 0;
-                const d = Number(parts[1]) || 1;
-                if (n > 0) {
-                    videoObj.fps_n = n;
-                    videoObj.fps_d = d > 0 ? d : 1;
-                }
-            } else {
-                const n = Number(v) || 0;
-                if (n > 0) {
-                    videoObj.fps_n = n;
-                    videoObj.fps_d = 1;
-                }
-            }
-        }
-
-        if (vb > 0) videoObj.bitrate = vb;
-
-        body.video = videoObj;
-    }
-
-    if (audioSel && audioSel.value) {
-        const codecEl = document.getElementById('audio-codec');
-        const srEl = document.getElementById('audio-samplerate');
-        const chEl = document.getElementById('audio-channels');
-        const brEl = document.getElementById('audio-bitrate');
-
-        const audioObj = {
-            device: audioSel.value,
-            codec: codecEl ? codecEl.value : 'aac'
-        };
-
-        const sr = srEl ? Number(srEl.value) : 0;
-        const ch = chEl ? Number(chEl.value) : 0;
-        const br = brEl ? Number(brEl.value) : 0; // br is in kbps from UI
-
-        if (sr > 0) audioObj.sampleRate = sr;
-        if (ch > 0) audioObj.channels = ch;
-        // send bitrate in bits/sec (e.g. 128 kbps -> 128000)
-        if (br > 0) audioObj.bitrate = br * 1000;
-
-        body.audio = audioObj;
-    }
-
-    // must specify at least video or audio
-    if (!body.video && !body.audio) {
-        alert('Please specify a video or audio device (at least one).');
-        return;
-    }
-
-    // collect outputs from form — do not allow empty output rows
-    body.outputs = [];
-    const rows = document.querySelectorAll('#outputs-container .output-row');
-    if (!rows || rows.length === 0) {
-        alert('Please add at least one output with a URL.');
-        return;
-    }
-
-    for (const r of rows) {
-        const typeEl = r.querySelector('.output-type');
-        const urlEl = r.querySelector('.output-url');
-        if (!typeEl || !urlEl) continue;
-        const type = typeEl.value;
-        const url = urlEl.value.trim();
-        if (url.length === 0) {
-            alert('Please fill URL for all outputs or remove empty rows.');
-            return;
-        }
-        body.outputs.push({ type: type, url: url });
-    }
-
-    // ensure outputs are unique within this new stream
-    const seen = new Set();
-    for (const o of body.outputs) {
-        if (seen.has(o.url)) {
-            alert('Duplicate outputs in the form: output URL "' + o.url + '" appears multiple times.');
-            return;
-        }
-        seen.add(o.url);
-    }
-
-    // ensure no output URL duplicates an existing stream's outputs
-    try {
-        const existingStreams = await fetch('/streams').then(r => r.json());
-        const existingUrls = new Set();
-        for (const s of existingStreams || []) {
-            // when editing, allow outputs that belong to the stream being edited
-            if (currentEditingId && s.id === currentEditingId) continue;
-            for (const o of s.outputs || []) {
-                if (o && o.url) existingUrls.add(o.url);
-            }
-        }
-
-        for (const o of body.outputs) {
-            if (existingUrls.has(o.url)) {
-                alert('Output URL "' + o.url + '" is already used by another stream. Choose a different URL.');
-                return;
-            }
-        }
-    } catch (e) {
-        // if checking existing streams fails, block creation and inform user
-        alert('Failed to check existing streams: ' + e);
-        return;
-    }
-
-    try {
-        let resp;
-        if (currentEditingId) {
-            resp = await fetch('/streams/' + currentEditingId, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
-            });
-        } else {
-            resp = await fetch('/streams', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
-            });
-        }
-
-        if (resp.status === 201 || resp.status === 200) {
-            alert(currentEditingId ? 'Stream updated' : 'Stream created');
-            currentEditingId = null;
-            const createBtn = document.getElementById('create-btn');
-            const cancelBtn = document.getElementById('cancel-edit-btn');
-            if (createBtn) createBtn.textContent = 'Create stream';
-            if (cancelBtn) cancelBtn.style.display = 'none';
-            loadStreams();
-        } else {
-            const j = await resp.json().catch(() => null);
-            alert('Failed to create/update stream: ' + (j && j.error ? j.error : resp.statusText));
-        }
-    } catch (e) {
-        alert('Error: ' + e);
-    }
-}
-
-function addOutputRow() {
-    const container = document.getElementById('outputs-container');
-    if (!container) return;
-
-    const row = document.createElement('div');
-    row.className = 'output-row';
-    row.innerHTML = `
-        <select class="output-type">
-            <option value="rtsp">RTSP</option>
-            <option value="rtmp">RTMP</option>
-        </select>
-        <input class="output-url" type="text" placeholder="url (e.g. rtmp://...)">
-        <button type="button" class="btn small" onclick="removeOutputRow(this)">Remove</button>
-    `;
-
-    container.appendChild(row);
-}
-
-function removeOutputRow(btn) {
-    const container = document.getElementById('outputs-container');
-    if (!container) return;
-
-    const rows = container.querySelectorAll('.output-row');
-    if (!rows || rows.length <= 1) {
-        alert('Cannot remove the last output. Add another output first.');
-        return;
-    }
-
-    const row = btn && btn.parentElement;
-    if (!row) return;
-    container.removeChild(row);
-}
-
-// attach change listener so visibility updates when user changes audio device
-const audioSelectEl = document.getElementById && document.getElementById('audio-select');
-if (audioSelectEl) {
-    audioSelectEl.addEventListener('change', updateAudioParamsVisibility);
-}
-
-// attach listener for video select
-const videoSelectEl = document.getElementById && document.getElementById('video-select');
-if (videoSelectEl) {
-    videoSelectEl.addEventListener('change', updateVideoParamsVisibility);
-}
-
-// Fallback: listen for change events on the document in case inline handlers/listeners
-// don't fire in some environments. This ensures visibility toggles whenever the
-// selects change value.
-document.addEventListener('change', function (ev) {
-    const t = ev.target;
-    if (!t) return;
-    if (t.id === 'video-select') updateVideoParamsVisibility();
-    if (t.id === 'audio-select') updateAudioParamsVisibility();
 });
-
-loadStreams();

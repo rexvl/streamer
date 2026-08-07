@@ -200,7 +200,10 @@ inline void to_json(nlohmann::json& j, const std::map<std::string, OutputSetting
     j = nlohmann::json::array();
 
     for (const auto& it : outputs) {
-        j.push_back(it.second);
+        nlohmann::json out = it.second;
+        // include map key as explicit id so clients can match runtime status
+        out["id"] = it.first;
+        j.push_back(out);
     }
 }
 

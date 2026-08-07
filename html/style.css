@@ -49,6 +49,27 @@ button:hover{opacity:0.95}
 button.danger{background:var(--danger);border-color:rgba(255,107,107,0.2)}
 .card h3{margin:0 0 8px 0;display:flex;align-items:center;gap:8px}
 .outputs-actions{margin-top:8px}
+.output-block{border:1px solid rgba(255,255,255,0.03);padding:8px;border-radius:6px;margin-bottom:8px;display:block}
+.output-block .output-header{display:flex;align-items:center;justify-content:space-between}
+.output-block .output-info{display:flex;align-items:center;gap:8px}
+.output-block .output-number{font-weight:700}
+.output-block .output-fields{margin-top:8px;display:grid;grid-template-columns:1fr auto;gap:8px}
+.output-toggle{appearance:none;width:44px;height:24px;border-radius:12px;background:#222;position:relative;cursor:pointer;border:1px solid var(--border)}
+.output-toggle:after{content:'';position:absolute;width:18px;height:18px;border-radius:50%;background:#e6eef6;top:2px;left:2px;transition:all .12s}
+.output-toggle.checked{background:var(--accent);}
+.output-toggle.checked:after{left:24px}
+
+/* runtime status coloring for toggle (independent from checked state) */
+.output-toggle.status-live { background: var(--accent); border-color: rgba(46,204,113,0.25); }
+.output-toggle.status-starting { background: var(--warn); border-color: rgba(255,184,107,0.2); }
+.output-toggle.status-error { background: var(--danger); border-color: rgba(255,107,107,0.2); }
+.output-toggle.status-stopped { background: #222; border-color: var(--border); }
+
+/* ensure the knob remains visible on colored backgrounds */
+.output-toggle.status-live:after,
+.output-toggle.status-starting:after,
+.output-toggle.status-error:after,
+.output-toggle.status-stopped:after { background: #fff; }
 .small{padding:6px 8px;font-size:13px}
 .status-bar{padding:10px;background:linear-gradient(90deg,#0f161a,#101417);border-radius:6px;margin-bottom:12px}
 #status-bar{display:flex;align-items:center;gap:12px;padding:10px;border-radius:6px;background:linear-gradient(90deg,#0f161a,#0b0f12);margin-bottom:12px}

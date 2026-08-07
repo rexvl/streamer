@@ -42,6 +42,9 @@ $(function(){
 
   async function refreshAll(){
     try {
+      // capture current streams so we can detect newly-created ones from the server
+      const prevIds = Object.keys(streamsMap || {});
+
       const [streams, statuses, vdev, adev] = await Promise.all([
         apiGet('/streams'),
         apiGet('/status'),
@@ -59,9 +62,60 @@ $(function(){
       audioDevices = adev || [];
 
       renderAll();
+
+      // if the server reported one or more new streams, and the user is not
+      // currently viewing a stream (dashboard active), open the newly created
+      // stream as if the user clicked it in the sidebar
+      const newIds = Object.keys(streamsMap || {}).filter(id => !prevIds.includes(id));
+      if (newIds.length > 0 && !activeStreamId) {
+        // open the first new stream
+        try { selectStream(newIds[0]); } catch (e) { console.debug('auto-select new stream failed', e); }
+      }
+      // update runtime output status indicators for the currently open stream without re-opening
+      if (activeStreamId) {
+        updateOutputRuntimeClasses(activeStreamId);
+      }
     } catch (e) {
       console.error('refreshAll', e);
     }
+  }
+
+  function outputStatusToClass(s) {
+    if (!s) return 'status-stopped';
+    if (s === 'success') return 'status-live';
+    if (s === 'fail') return 'status-error';
+    // unknown -> treat as starting when output is enabled or stream progressing
+    if (s === 'unknown') return 'status-starting';
+    if (s === 'connecting' || s === 'pending') return 'status-starting';
+    return 'status-stopped';
+  }
+
+  function updateOutputRuntimeClasses(streamId) {
+    const st = statusMap[streamId];
+    if (!st || !st.outputs) return;
+    const stOutputs = st.outputs;
+
+    $('#outputs-list .output-block').each(function() {
+      const $block = $(this);
+      const key = $block.attr('data-output-id');
+      if (!key) return;
+
+      // find matching runtime status by id
+      let entry = stOutputs.find(x => String(x.id) === String(key));
+      // fallback: try match by url if id isn't present
+      if (!entry) {
+        entry = stOutputs.find(x => String(x.id) === String(key));
+      }
+
+      const $toggle = $block.find('.output-toggle');
+      if (!$toggle.length) return;
+
+      let cls = outputStatusToClass(entry ? entry.status : null);
+      // if user disabled the output (toggle not checked) show STOPPED color
+      const isChecked = $toggle.hasClass('checked');
+      if (!isChecked) cls = 'status-stopped';
+      $toggle.removeClass('status-live status-starting status-error status-stopped').addClass(cls);
+    });
   }
 
   function statusToBadge(st, stream){
@@ -300,41 +354,164 @@ $(function(){
         await renderStreamView(id);
       });
 
-      // outputs
+      // outputs: render up to 5 outputs with status dot, number, toggle and fields
       const $outs = $('#outputs-list').empty();
-      (s.outputs || []).forEach((o, idx) => {
-        const $r = $('<div/>').addClass('card').css({'display':'flex','align-items':'center','justify-content':'space-between','margin-bottom':'6px'});
-        const left = $('<div/>').append($('<div/>').text(`${o.type} — ${o.url}`)).append($('<div/>').addClass('stream-meta').text(`enabled: ${o.enabled? 'yes':'no'}`));
-        const $actions = $('<div/>');
-        const $toggle = $('<button/>').addClass('small').text(o.enabled? 'Disable':'Enable').on('click', async ()=>{
+      s.outputs = s.outputs || [];
+      const stOutputs = (st && st.outputs) ? st.outputs : [];
+
+      function findOutputStatus(o) {
+        // try match by id then url
+        if (!o) return null;
+        const byId = stOutputs.find(x => x.id && o.id && String(x.id) === String(o.id));
+        if (byId) return byId.status;
+        const byUrl = stOutputs.find(x => x.id && o.url && String(x.url) === String(o.url));
+        if (byUrl) return byUrl.status;
+        return null;
+      }
+
+      s.outputs.forEach((o, idx) => {
+        const num = idx + 1;
+        const status = findOutputStatus(o);
+        let statusClass;
+        if (status === 'success') {
+          // only show LIVE color when this output is enabled
+          statusClass = o.enabled ? 'status-live' : 'status-stopped';
+        } else if (status === 'fail') {
+          // only show ERROR when enabled
+          statusClass = o.enabled ? 'status-error' : 'status-stopped';
+        } else {
+          // unknown runtime status
+          if (o.enabled) {
+            // if the stream as a whole is starting (sources OK but outputs not yet successful), show STARTING
+            const overall = statusToBadge(st, s);
+            if (overall === 'STARTING') statusClass = 'status-starting';
+            else statusClass = 'status-stopped';
+          } else {
+            statusClass = 'status-stopped';
+          }
+        }
+
+        const $block = $('<div/>').addClass('output-block');
+        // expose output id (or url fallback) for runtime matching
+        if (o.id) $block.attr('data-output-id', o.id);
+        else if (o.url) $block.attr('data-output-id', o.url);
+        // do not dim or disable the block when toggled off; controls remain editable
+
+        const $header = $('<div/>').addClass('output-header');
+        const $info = $('<div/>').addClass('output-info');
+        // move toggle into the info area and remove separate status dot
+        const $toggle = $('<div/>').addClass('output-toggle').toggleClass('checked', !!o.enabled).attr('role','switch');
+        // apply runtime status color class (respecting enabled state)
+        $toggle.removeClass('status-live status-starting status-error status-stopped').addClass(statusClass);
+        const $num = $('<span/>').addClass('output-number').text('#' + num);
+
+        $toggle.on('click', async ()=>{
           o.enabled = !o.enabled;
+          if (o.enabled) {
+            $toggle.addClass('checked');
+            // immediately show STARTING color when user enables output
+            $toggle.removeClass('status-live status-error status-stopped').addClass('status-starting');
+          } else {
+            $toggle.removeClass('checked');
+            // when user disables, show STOPPED color immediately
+            $toggle.removeClass('status-live status-starting status-error').addClass('status-stopped');
+          }
           const payload = buildStreamPayload(s);
           await apiPut(`/streams/${id}`, payload);
           await refreshAll();
           await renderStreamView(id);
         });
-        const $remove = $('<button/>').addClass('small danger').text('Remove').on('click', async ()=>{
-          s.outputs.splice(idx,1);
+
+        $info.append($toggle).append($num);
+        $header.append($info);
+        $block.append($header);
+
+        const $fields = $('<div/>').addClass('output-fields');
+        const $type = $('<select/>').addClass('form-control').css('max-width','140px');
+        $type.append($('<option/>').attr('value','rtmp').text('RTMP'));
+        $type.append($('<option/>').attr('value','rtsp').text('RTSP'));
+        $type.val(o.type || 'rtmp');
+        const $url = $('<input/>').addClass('form-control').attr('type','text').val(o.url || '');
+
+        $type.on('change', async ()=>{
+          o.type = $type.val();
           const payload = buildStreamPayload(s);
           await apiPut(`/streams/${id}`, payload);
           await refreshAll();
-          await renderStreamView(id);
         });
-        $actions.append($toggle).append($remove);
-        $r.append(left).append($actions);
-        $outs.append($r);
+
+        let saveTimeout = null;
+        $url.on('input', ()=>{
+          clearTimeout(saveTimeout);
+          saveTimeout = setTimeout(async ()=>{
+            o.url = $url.val();
+            const payload = buildStreamPayload(s);
+            await apiPut(`/streams/${id}`, payload);
+            await refreshAll();
+          }, 600);
+        });
+
+        let $remove = null;
+        // show remove button only when more than one output exists
+        if ((s.outputs || []).length > 1) {
+          $remove = $('<button/>').addClass('small danger').text('Remove').on('click', async ()=>{
+            if (!confirm('Remove output #'+(idx+1)+'? This operation cannot be undone.')) return;
+            s.outputs.splice(idx,1);
+            const payload = buildStreamPayload(s);
+            await apiPut(`/streams/${id}`, payload);
+            await refreshAll();
+            await renderStreamView(id);
+          });
+        }
+
+        $fields.append($type).append($url);
+        if ($remove) $fields.append($remove);
+        $block.append($fields);
+        $outs.append($block);
       });
 
+      // add new output handler with max 5 outputs
       $('#btn-add-output').off('click').on('click', async ()=>{
-        const type = prompt('Output type (rtmp or rtsp):', 'rtmp'); if (!type) return;
-        const url = prompt('Output URL:', 'rtmp://'); if (!url) return;
         s.outputs = s.outputs || [];
-        s.outputs.push({ type: type, url: url, enabled: true });
+        if (s.outputs.length >= 5) {
+          alert('Maximum 5 outputs allowed');
+          return;
+        }
+        // remember current count so we can detect server-side changes
+        const prevCount = s.outputs.length;
+        // default new output: create disabled so it doesn't start immediately
+        s.outputs.push({ type: 'rtmp', url: 'rtmp://', enabled: false });
         const payload = buildStreamPayload(s);
         await apiPut(`/streams/${id}`, payload);
         await refreshAll();
         await renderStreamView(id);
+
+        // Defensive check: if backend ignored the enabled flag and enabled the
+        // newly-created output, explicitly disable it again.
+        try {
+          const updated = streamsMap[String(id)];
+          if (updated && Array.isArray(updated.outputs) && updated.outputs.length > prevCount) {
+            const newOut = updated.outputs[prevCount];
+            if (newOut && newOut.enabled) {
+              // flip locally then push to server to ensure disabled
+              // find corresponding local output entry (by position)
+              if (s.outputs[prevCount]) s.outputs[prevCount].enabled = false;
+              await apiPut(`/streams/${id}`, buildStreamPayload(s));
+              await refreshAll();
+              await renderStreamView(id);
+            }
+          }
+        } catch (e) {
+          console.debug('post-add-output guard failed', e);
+        }
       });
+
+      // disable add button if already 5 outputs
+      if (s.outputs.length >= 5) {
+        $('#btn-add-output').prop('disabled', true).attr('title','Maximum 5 outputs');
+      } else {
+        $('#btn-add-output').prop('disabled', false).removeAttr('title');
+      }
 
       $('#btn-start').off('click').on('click', async ()=>{
         s.outputs = s.outputs || [];
@@ -383,21 +560,25 @@ $(function(){
 
   function showDashboard(){ activeStreamId = null; $('.view').addClass('hidden'); $('#dashboard-view').removeClass('hidden'); renderAll(); }
   function showStream(id){ activeStreamId = id; $('.view').addClass('hidden'); $('#stream-view').removeClass('hidden'); renderStreamView(id); }
+  // ensure sidebar reflects active selection when navigating programmatically
+  function selectStream(id){
+    activeStreamId = id;
+    renderSidebar();
+    $('.view').addClass('hidden');
+    $('#stream-view').removeClass('hidden');
+    renderStreamView(id);
+  }
 
-  // create stream
+  // create stream: create with one disabled default output without prompts
   $('#btn-new-stream').on('click', async ()=>{
     try{
-      const wantsOutput = confirm('Create stream with an initial output?');
-      let body = {};
-      if (wantsOutput) {
-        const type = prompt('Output type (rtmp or rtsp):', 'rtmp'); if(!type) return;
-        const url = prompt('Output URL:', 'rtmp://'); if(!url) return;
-        body.outputs = [{ type: type, url: url, enabled: true }];
-      }
+      const body = { outputs: [ { type: 'rtmp', url: 'rtmp://', enabled: false } ] };
       const resp = await apiPost('/streams', body);
       if (resp.status === 201) {
+        const data = await resp.json();
         await refreshAll();
-        alert('Stream created');
+        // open newly created stream for editing
+        if (data && data.id) selectStream(String(data.id));
       } else {
         const txt = await resp.text(); alert('Create failed: '+resp.status+' '+txt);
       }

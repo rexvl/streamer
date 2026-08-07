@@ -80,7 +80,7 @@ struct StreamSettings {
 
         return false;
     }
-
+/*
     bool isVideoAvailable() {
         return (video && video->device);
     }
@@ -88,6 +88,7 @@ struct StreamSettings {
     bool isAudioAvailable() {
         return (audio && audio->device);
     }
+*/
 };
 
 struct DeviceInfo {
@@ -141,6 +142,9 @@ public:
     bool updateStream(const StreamSettings& settings);
     bool removeStream(const std::string& id);
 
+    // to get enabeld streams and ouputs only
+    void getActiveStreams(std::map<std::string, StreamSettings>& streams);
+
     // device api
     void addVideoDevice(const std::string& id, const std::string& name, GstDevice* device);
     void addAudioDevice(const std::string& id, const std::string& name, GstDevice* device);
@@ -151,6 +155,7 @@ public:
     GstDevice* getVideoDevice(const std::string& id);
     GstDevice* getAudioDevice(const std::string& id);
 
+    // status api
     void updateStreamStatus(const std::string& id, const StreamStatus& stream_status);
     void getStreamsStatus(std::map<std::string, StreamStatus>& stream_status);
     bool getStreamStatus(StreamStatus& stream_status, const std::string& id);

@@ -193,38 +193,7 @@ int main() {
             last_sync = cur_time;
 
             std::map<std::string, StreamSettings> new_streams;
-            ConfigManager::getInstance().getStreams(new_streams);
-
-            // handle disabled streams
-            auto ns_it = new_streams.begin();
-            while (ns_it != new_streams.end()) {
-                auto& settings = ns_it->second;
-
-                if (!settings.isEnabled()) {
-                    ns_it = new_streams.erase(ns_it);
-                    continue;
-                }
-
-                bool source_available = false;
-                if (settings.video) {
-                    if (settings.video->device) {
-                        source_available = true;
-                    }
-                }
-
-                if (settings.audio) {
-                    if (settings.audio->device) {
-                        source_available = true;
-                    }
-                }
-
-                if (!source_available) {
-                    ns_it = new_streams.erase(ns_it);
-                    continue;
-                }
-
-                ns_it++;
-            }
+            ConfigManager::getInstance().getActiveStreams(new_streams);
 
             // sync existed streams
             auto cs_it = cur_streams.begin();
@@ -233,15 +202,6 @@ int main() {
                 if (ns_it == new_streams.end()) {
                     // remove whole stream
                     cs_it = cur_streams.erase(cs_it);
-                    continue;
-                }
-
-                if (!ns_it->second.isEnabled()) {
-                    // remove whole stream
-                    cs_it = cur_streams.erase(cs_it);
-
-                    // remove disabled stream
-                    new_streams.erase(ns_it);
                     continue;
                 }
 
@@ -305,10 +265,6 @@ int main() {
             // create new streams
             for (const auto& ns_it : new_streams) {
                 const auto& settings = ns_it.second;
-                if (!settings.isEnabled()) {
-                    // skip disabled stream
-                    continue;
-                }
 
                 auto media_stream = std::make_unique<MediaStream>(settings.id);
                 if (!media_stream->create()) {
@@ -332,7 +288,7 @@ int main() {
                 }
 
                 if (!media_stream->start()) {
-                    return false;
+                    continue;
                 }
 
                 printf("started stream=%s\n", ns_it.first.c_str());

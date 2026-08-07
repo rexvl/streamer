@@ -2,6 +2,7 @@
 #include <nlohmann/json.hpp>
 #include <config_manager.h>
 #include <json_serialization.h>
+#include <iostream>
 
 ConfigManager& ConfigManager::getInstance() {
     static ConfigManager instance;
@@ -37,6 +38,50 @@ void ConfigManager::getStreams(std::map<std::string, StreamSettings>& streams) {
     streams = streams_;
 }
 
+void ConfigManager::getActiveStreams(std::map<std::string, StreamSettings>& streams) {
+    getStreams(streams);
+
+    auto it = streams.begin();
+    while (it != streams.end()) {
+        auto& settings = it->second;
+
+        bool source_available = false;
+        if (settings.video) {
+            if (settings.video->device) {
+                source_available = true;
+            }
+        }
+
+        if (settings.audio) {
+            if (settings.audio->device) {
+                source_available = true;
+            }
+        }
+
+        if (!source_available) {
+            it  = streams.erase(it);
+            continue;
+        }
+
+        // remove disabled outputs
+        auto& outputs = settings.outputs;
+        auto outputs_it = outputs.begin();
+        while (outputs_it != outputs.end()) {
+            if (!outputs_it->second.enabled) {
+                outputs_it = outputs.erase(outputs_it);
+            } else {
+                outputs_it++;
+            }
+        }
+
+        if (outputs.empty()) {
+            it = streams.erase(it);
+        } else {
+            it++;
+        }
+    }
+}
+
 bool ConfigManager::getStream(StreamSettings& stream, const std::string& id) {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     auto it = streams_.find(id);
@@ -54,6 +99,14 @@ std::string ConfigManager::addStream(StreamSettings& settings) {
     addStreamIndex(settings);
 
     streams_[settings.id] = settings;
+    // debug: log created stream outputs and enabled flags
+    try {
+        std::cout << "ConfigManager::addStream id=" << settings.id << " outputs=" << settings.outputs.size() << "\n";
+        for (const auto &it : settings.outputs) {
+            std::cout << "  out id=" << it.first << " enabled=" << (it.second.enabled ? "true" : "false") << " url=" << it.second.url << "\n";
+        }
+    } catch (...) {}
+
     return settings.id;
 }
 
@@ -65,6 +118,14 @@ bool ConfigManager::updateStream(const StreamSettings& settings) {
     }
 
     auto& cur_settings = it->second;
+    // debug: log incoming update
+    try {
+        std::cout << "ConfigManager::updateStream id=" << settings.id << " outputs=" << settings.outputs.size() << "\n";
+        for (const auto &it2 : settings.outputs) {
+            std::cout << "  in out id=" << it2.first << " enabled=" << (it2.second.enabled ? "true" : "false") << " url=" << it2.second.url << "\n";
+        }
+    } catch (...) {}
+
     removeStreamIndex(cur_settings);
 
     cur_settings = settings;

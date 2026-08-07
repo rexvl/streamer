@@ -216,8 +216,11 @@ static int callback_http(struct lws* wsi, enum lws_callback_reasons reason, void
 
         try {
             if (sess->method == "POST" && path == "/streams") {
+                // copy to avoid panic on modify in parser
+                const std::string body = sess->body;
                 auto j = nlohmann::json::parse(sess->body);
                 StreamSettings settings = j.get<StreamSettings>();
+
                 std::string id = ConfigManager::getInstance().addStream(settings);
                 send_http_response(wsi, json_to_string(nlohmann::json{{"id", id}}), "application/json", 201);
                 return 0;
@@ -225,9 +228,13 @@ static int callback_http(struct lws* wsi, enum lws_callback_reasons reason, void
 
             if (sess->method == "PUT" && path.rfind("/streams/", 0) == 0) {
                 std::string id = path.substr(strlen("/streams/"));
-                auto j = nlohmann::json::parse(sess->body);
+
+                // copy to avoid panic on modify in parser
+                const std::string body = sess->body;
+                auto j = nlohmann::json::parse(body);
                 StreamSettings settings = j.get<StreamSettings>();
                 settings.id = id;
+
                 if (!ConfigManager::getInstance().updateStream(settings)) {
                     send_http_response(wsi, json_to_string(nlohmann::json{{"error","Stream not found"}}), "application/json", 404);
                     return 0;

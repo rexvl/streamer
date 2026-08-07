@@ -64,7 +64,7 @@ inline
 void from_json(const nlohmann::json& j, OutputSettings& c) {
     j.at("type").get_to(c.type);
 
-    if (j.contains("enbaled")) {
+    if (j.contains("enabled")) {
         j.at("enabled").get_to(c.enabled);
     }
 

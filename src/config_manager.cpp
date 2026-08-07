@@ -73,7 +73,7 @@ bool ConfigManager::updateStream(const StreamSettings& settings) {
 }
 
 
-void ConfigManager::addStreamIndex(const StreamSettings& settings) {
+void ConfigManager::addStreamIndex(StreamSettings& settings) {
     if (!settings.isEnabled()) {
         return;
     }
@@ -127,7 +127,7 @@ void ConfigManager::removeStreamIndex(const StreamSettings& settings) {
 void ConfigManager::removeStreamIndex(std::map<GstDevice*, std::set<std::string>>& stream_index,
                                       GstDevice* device, const std::string& stream_id) {
     auto it = stream_index.find(device);
-    if (it != stream_index.end()) {
+    if (it == stream_index.end()) {
         return;
     }
 

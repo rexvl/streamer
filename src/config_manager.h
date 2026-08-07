@@ -122,7 +122,7 @@ class ConfigManager {
     void addStream(std::map<std::string, std::set<std::string>>& device_streams,
                    const std::string& device_id, const std::string& stream_id);
 
-    void addStreamIndex(const StreamSettings& settings);
+    void addStreamIndex(StreamSettings& settings);
 
     void removeStreamIndex(const StreamSettings& settings);
 

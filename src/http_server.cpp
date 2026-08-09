@@ -42,10 +42,14 @@ static std::string json_to_string(const T& data) {
     return j.dump(4);
 }
 
+enum class HttpMethod {
+    POST, PUT
+};
+
 // forward declaration of protocols array so other functions can reference
 // per-HTTP-connection/session data
 struct http_session {
-    std::string method;
+    HttpMethod method;
     std::string path;
     std::string body;
 };
@@ -54,7 +58,7 @@ static int callback_http(struct lws* wsi, enum lws_callback_reasons reason, void
 static int callback_ws_audio(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len);
 
 static struct lws_protocols protocols[] = {
-    { "http", callback_http, sizeof(http_session), 0, 0, nullptr },
+    { "http", callback_http, 0, 0, 0, nullptr },
     { "ws-audio", callback_ws_audio, 0, 0, 0, nullptr },
     { nullptr, nullptr, 0, 0, 0, nullptr }
 };
@@ -62,163 +66,138 @@ static struct lws_protocols protocols[] = {
 // HTTP callback: serve API endpoints and static files from ./html
 static int callback_http(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len) {
     switch (reason) {
-    case LWS_CALLBACK_HTTP: {
-        http_session* sess = (http_session*)user;
+    case LWS_CALLBACK_HTTP: 
+    {
         char buf[1024];
 
         // Determine method and path using available URI tokens
-        sess->method.clear();
-        sess->path.clear();
         if (lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_GET_URI) > 0) {
-            sess->method = "GET";
-            sess->path = std::string(buf);
-        } else if (lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_POST_URI) > 0) {
-            sess->method = "POST";
-            sess->path = std::string(buf);
-        } else if (lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_PUT_URI) > 0) {
-            sess->method = "PUT";
-            sess->path = std::string(buf);
-        } else if (lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_DELETE_URI) > 0) {
-            sess->method = "DELETE";
-            sess->path = std::string(buf);
-        } else if (lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_HEAD_URI) > 0) {
-            sess->method = "HEAD";
-            sess->path = std::string(buf);
-        }
+            std::string path = std::string(buf);
 
-        // normalize path: strip query string and trailing slash (except for root)
-        std::string path = sess->path;
-        auto qpos = path.find('?');
-        if (qpos != std::string::npos) path.erase(qpos);
-        if (path.size() > 1 && path.back() == '/') path.pop_back();
-
-        // debug log
-        std::cerr << "HTTP " << sess->method << " " << path << std::endl;
-        if (path.empty() || path == "/") path = "/index.html";
-
-        // API routes
-        if (path == "/status") {
-            std::map<std::string, StreamStatus> streams_status;
-            ConfigManager::getInstance().getStreamsStatus(streams_status);
-            send_http_response(wsi, json_to_string(streams_status), "application/json");
-            return 0;
-        }
-
-        if (path.rfind("/status/", 0) == 0) {
-            std::string id = path.substr(strlen("/status/"));
-            StreamStatus streams_status;
-            if (!ConfigManager::getInstance().getStreamStatus(streams_status, id)) {
-                send_http_response(wsi, json_to_string(nlohmann::json{{"error","Stream not found"}}), "application/json", 404);
+            if (path == "/streams") {
+                // respond with list for GET or default
+                std::map<std::string, StreamSettings> streams;
+                ConfigManager::getInstance().getStreams(streams);
+                send_http_response(wsi, json_to_string(streams), "application/json");
                 return 0;
             }
-            send_http_response(wsi, json_to_string(streams_status), "application/json");
-            return 0;
-        }
 
-        if (path == "/streams") {
-            // respond with list for GET or default
-            std::map<std::string, StreamSettings> streams;
-            ConfigManager::getInstance().getStreams(streams);
-            send_http_response(wsi, json_to_string(streams), "application/json");
-            return 0;
-        }
+            if (path.rfind("/streams/", 0) == 0) {
+                std::string id = path.substr(strlen("/streams/"));
 
-        if (path.rfind("/streams/", 0) == 0) {
-            std::string id = path.substr(strlen("/streams/"));
-            // debug: print id bytes
-            try {
-                std::ostringstream idhex;
-                idhex << std::hex;
-                for (unsigned char c : id) idhex << (int)c << " ";
-                std::cerr << "Requested stream id='" << id << "' len=" << id.size() << " hex=" << idhex.str() << std::endl;
-            } catch(...) {}
-
-            // tolerate corrupted/partial method tokens from lws: treat anything that is not a PUT/DELETE as GET
-            std::string method = sess->method;
-            // if method token is garbled but request has a Content-Length, assume it's a PUT (body expected)
-            if (method.find("PUT") == std::string::npos && method.find("DELETE") == std::string::npos) {
-                if (lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_CONTENT_LENGTH) > 0) {
-                    method = "PUT";
-                    sess->method = "PUT";
-                }
-            }
-            if (method.find("PUT") == std::string::npos && method.find("DELETE") == std::string::npos) {
-                StreamSettings stream;
-                if (!ConfigManager::getInstance().getStream(stream, id)) {
-                    // debug: log available stream ids to help diagnose mismatches
-                    try {
-                        std::map<std::string, StreamSettings> all;
-                        ConfigManager::getInstance().getStreams(all);
-                        std::cerr << "Available stream ids:";
-                        for (const auto &kv : all) std::cerr << " '" << kv.first << "'";
-                        std::cerr << std::endl;
-                    } catch(...) {}
-
-                    send_http_response(wsi, json_to_string(nlohmann::json{{"error","Stream not found"}}), "application/json", 404);
+                StreamSettings settings;
+                if (!ConfigManager::getInstance().getStream(settings, id)) {
+                    send_http_response(wsi, json_to_string(nlohmann::json{ {"error","Stream not found"} }), "application/json", 404);
                     return 0;
                 }
-                send_http_response(wsi, json_to_string(stream), "application/json");
+                send_http_response(wsi, json_to_string(settings), "application/json");
                 return 0;
-            } else if (method.find("PUT") != std::string::npos) {
-                // wait for body
-                sess->body.clear();
+            }
+
+            if (path == "/status") {
+                std::map<std::string, StreamStatus> streams_status;
+                ConfigManager::getInstance().getStreamsStatus(streams_status);
+                send_http_response(wsi, json_to_string(streams_status), "application/json");
                 return 0;
-            } else if (method.find("DELETE") != std::string::npos) {
+            }
+
+            if (path.rfind("/status/", 0) == 0) {
+                std::string id = path.substr(strlen("/status/"));
+                StreamStatus streams_status;
+                if (!ConfigManager::getInstance().getStreamStatus(streams_status, id)) {
+                    send_http_response(wsi, json_to_string(nlohmann::json{ {"error","Stream not found"} }), "application/json", 404);
+                    return 0;
+                }
+                send_http_response(wsi, json_to_string(streams_status), "application/json");
+                return 0;
+            }
+
+            if (path == "/devices/video") {
+                std::map<std::string, std::shared_ptr<DeviceInfo>> video_devices;
+                ConfigManager::getInstance().getVideoDevices(video_devices);
+                send_http_response(wsi, json_to_string(video_devices), "application/json");
+                return 0;
+            }
+
+            if (path == "/devices/audio") {
+                std::map<std::string, std::shared_ptr<DeviceInfo>> audio_devices;
+                ConfigManager::getInstance().getAudioDevices(audio_devices);
+                send_http_response(wsi, json_to_string(audio_devices), "application/json");
+                return 0;
+            }
+
+            if (path.empty() || path == "/") {
+                path = "/index.html";
+            }
+
+            std::string file_path = std::string("./html") + path;
+            std::ifstream ifs(file_path, std::ios::binary);
+            if (!ifs.good()) {
+                send_http_response(wsi, "Not found", "text/plain", 404);
+                return 0;
+            }
+
+            std::ostringstream ss;
+            ss << ifs.rdbuf();
+            const std::string body = ss.str();
+            const std::string ct = mime_type_for_path(file_path);
+            send_http_response(wsi, body, ct);
+            return 0;
+        }
+
+        if (lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_POST_URI) > 0) {
+            http_session* sesion = new http_session();
+            sesion->method = HttpMethod::POST;
+            sesion->path = std::string(buf);
+            lws_set_wsi_user(wsi, sesion);
+            return 0;
+        }
+
+        if (lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_PUT_URI) > 0) {
+            http_session* sesion = new http_session();
+            sesion->method = HttpMethod::PUT;
+            sesion->path = std::string(buf);
+            lws_set_wsi_user(wsi, sesion);
+            return 0;
+        }
+
+        if (lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_DELETE_URI) > 0) {
+            std::string path = std::string(buf);
+
+            if (path.rfind("/streams/", 0) == 0) {
+                std::string id = path.substr(strlen("/streams/"));
+
                 if (!ConfigManager::getInstance().removeStream(id)) {
-                    send_http_response(wsi, json_to_string(nlohmann::json{{"error","Stream not found"}}), "application/json", 404);
+                    send_http_response(wsi, json_to_string(nlohmann::json{ {"error","Stream not found"} }), "application/json", 404);
                     return 0;
                 }
-                send_http_response(wsi, json_to_string(nlohmann::json{{"id", id}, {"status","deleted"}}), "application/json");
+
+                send_http_response(wsi, json_to_string(nlohmann::json{ {"id", id}, {"status","deleted"} }), "application/json");
                 return 0;
             }
         }
 
-        if (path == "/devices/video") {
-            std::map<std::string, std::shared_ptr<DeviceInfo>> video_devices;
-            ConfigManager::getInstance().getVideoDevices(video_devices);
-            send_http_response(wsi, json_to_string(video_devices), "application/json");
-            return 0;
-        }
-
-        if (path == "/devices/audio") {
-            std::map<std::string, std::shared_ptr<DeviceInfo>> audio_devices;
-            ConfigManager::getInstance().getAudioDevices(audio_devices);
-            send_http_response(wsi, json_to_string(audio_devices), "application/json");
-            return 0;
-        }
-
-        // serve static file from ./html
-        std::string file_path = std::string("./html") + path;
-        std::ifstream ifs(file_path, std::ios::binary);
-        if (!ifs.good()) {
-            send_http_response(wsi, "Not found", "text/plain", 404);
-            return 0;
-        }
-        std::ostringstream ss;
-        ss << ifs.rdbuf();
-        const std::string body = ss.str();
-        const std::string ct = mime_type_for_path(file_path);
-        send_http_response(wsi, body, ct);
+        send_http_response(wsi, "Not found", "text/plain", 404);
         return 0;
     }
+
     case LWS_CALLBACK_HTTP_BODY: {
         // receive a chunk of the request body
-        http_session* sess = (http_session*)user;
+        auto session = (http_session*)lws_wsi_user(wsi);
         if (in && len > 0) {
-            sess->body.append((const char*)in, len);
+            session->body.append((const char*)in, len);
         }
         return 0;
     }
+
     case LWS_CALLBACK_HTTP_BODY_COMPLETION: {
         // full body received; act based on saved path/method
-        http_session* sess = (http_session*)user;
-        const std::string& path = sess->path;
+        auto session = (http_session*)lws_wsi_user(wsi);
+        const std::string& path = session->path;
 
         try {
-            if (sess->method == "POST" && path == "/streams") {
-                // copy to avoid panic on modify in parser
-                const std::string body = sess->body;
-                auto j = nlohmann::json::parse(sess->body);
+            if (session->method == HttpMethod::POST && path == "/streams") {
+                auto j = nlohmann::json::parse(session->body);
                 StreamSettings settings = j.get<StreamSettings>();
 
                 std::string id = ConfigManager::getInstance().addStream(settings);
@@ -226,12 +205,10 @@ static int callback_http(struct lws* wsi, enum lws_callback_reasons reason, void
                 return 0;
             }
 
-            if (sess->method == "PUT" && path.rfind("/streams/", 0) == 0) {
+            if (session->method == HttpMethod::PUT && path.rfind("/streams/", 0) == 0) {
                 std::string id = path.substr(strlen("/streams/"));
+                auto j = nlohmann::json::parse(session->body);
 
-                // copy to avoid panic on modify in parser
-                const std::string body = sess->body;
-                auto j = nlohmann::json::parse(body);
                 StreamSettings settings = j.get<StreamSettings>();
                 settings.id = id;
 
@@ -251,6 +228,17 @@ static int callback_http(struct lws* wsi, enum lws_callback_reasons reason, void
         send_http_response(wsi, "Not found", "text/plain", 404);
         return 0;
     }
+
+    case LWS_CALLBACK_CLOSED_HTTP: 
+    {
+        auto session = (http_session*)lws_wsi_user(wsi);
+        if (session) {
+            delete session;
+            lws_set_wsi_user(wsi, nullptr);
+        }
+        return 0;
+    }
+
     default:
         break;
     }
@@ -315,6 +303,8 @@ static int callback_ws_audio(struct lws* wsi, enum lws_callback_reasons reason, 
 
 void HttpServer::start() {
     thread_ = std::thread([this]() {
+        lws_set_log_level(0, NULL); // disable console logging
+
         g_server = this;
 
         struct lws_context_creation_info info;

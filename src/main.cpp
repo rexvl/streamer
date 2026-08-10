@@ -15,6 +15,7 @@
 #include <media_output.h>
 #include <media_stream.h>
 #include <http_server.h>
+#include <stream_state_store.h>
 
 #include <windows.h> // SetConsoleOutputCP
 
@@ -72,7 +73,9 @@ int main() {
 
     gst_init(nullptr, nullptr);
 
-    HttpServer http_server;
+    StreamStateStore stream_states;
+
+    HttpServer http_server(&stream_states);
     http_server.start();
 
     GstDeviceMonitor* dev_monitor = gst_device_monitor_new();
@@ -90,7 +93,7 @@ int main() {
 
     bool running = true;
     while (running) {
-        GstMessage* dev_monitor_msg = gst_bus_timed_pop(dev_monitor_bus, 100 * GST_MSECOND);
+        GstMessage* dev_monitor_msg = gst_bus_timed_pop(dev_monitor_bus, 10 * GST_MSECOND);
         if (dev_monitor_msg) {
             GstDevice* device = nullptr;
             gchar* name = nullptr;
@@ -208,7 +211,7 @@ int main() {
             for (const auto& ns_it : new_streams) {
                 const auto& settings = ns_it.second;
 
-                auto media_stream = std::make_unique<MediaStream>();
+                auto media_stream = std::make_unique<MediaStream>(ns_it.first, &stream_states);
                 if (!media_stream->create(settings)) {
                     continue;
                 }
@@ -224,6 +227,9 @@ int main() {
             }
 
             update_output_status(cur_streams);
+
+            // remove orphans
+            stream_states.sync(new_streams);
         }
     }
 

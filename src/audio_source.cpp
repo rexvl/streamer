@@ -41,6 +41,16 @@ bool AudioSource::create() {
         return false;
     }
 
+    GstElement* level = gst_element_factory_make("level", NULL);
+    if (!level) {
+        return false;
+    }
+
+    g_object_set(level,
+        "interval", (gint64)100 * GST_MSECOND,
+        "post-messages", TRUE,
+        NULL);
+
     GstElement* enc = gst_element_factory_make("voaacenc", NULL);
     if (!enc) {
         return false;
@@ -55,8 +65,8 @@ bool AudioSource::create() {
         return false;
     }
 
-    gst_bin_add_many(GST_BIN(audio_bin), capture, audioconvert, enc, parser, NULL);
-    if (!gst_element_link_many(capture, audioconvert, enc, parser, NULL)) {
+    gst_bin_add_many(GST_BIN(audio_bin), capture, audioconvert, level, enc, parser, NULL);
+    if (!gst_element_link_many(capture, audioconvert, level, enc, parser, NULL)) {
         return false;
     }
 

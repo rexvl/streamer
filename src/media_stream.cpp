@@ -10,6 +10,12 @@
 #include <cstdio>
 #include <deque>
 
+#include <stream_state_store.h>
+
+MediaStream::MediaStream(const std::string& id, StreamStateStore* stream_states) :
+    id_(id), stream_states_(stream_states) {
+}
+
 bool MediaStream::create(const StreamSettings& settings) {
     pipeline = gst_pipeline_new(nullptr);
     if (!pipeline) {
@@ -171,6 +177,7 @@ bool MediaStream::ProcessError() {
 }
 
 bool MediaStream::ProcessMessage(uint64_t mask) {
+    //GstMessage* msg = gst_bus_pop(bus);
     GstMessage* msg = gst_bus_pop_filtered(bus, static_cast<GstMessageType>(mask));
     if (!msg) {
         return true;
@@ -241,6 +248,42 @@ bool MediaStream::ProcessMessage(uint64_t mask) {
             playing_ = true;
         }
 
+        break;
+    }
+
+    case GST_MESSAGE_ELEMENT:
+    {
+        const GstStructure* structure = gst_message_get_structure(msg);
+        if (!structure) {
+            break;
+        }
+
+        if (!gst_structure_has_name(structure, "level")) {
+            break;
+        }
+
+        const GValue* peak = gst_structure_get_value(structure, "peak");
+        if (!peak) {
+            break;
+        }
+
+        GValueArray* array = static_cast<GValueArray*>(g_value_get_boxed(peak));
+        guint channels = array->n_values;
+        if (channels <= 0) {
+            break;
+        }
+
+        double sum = 0.0;
+        for (guint i = 0; i < array->n_values; ++i) {
+            const GValue* value = &array->values[i];
+            if (G_VALUE_HOLDS_DOUBLE(value)) {
+                sum += g_value_get_double(value);
+            }
+        }
+
+        sum /= channels;
+
+        stream_states_->setAudioLevel(id_, sum);
         break;
     }
 

@@ -7,6 +7,9 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <chrono> 
+
+#include <stream_state_store.h>
 
 static HttpServer* g_server = nullptr;
 
@@ -245,50 +248,82 @@ static int callback_http(struct lws* wsi, enum lws_callback_reasons reason, void
     return 0;
 }
 
-// WebSocket audio protocol
-static std::vector<struct lws*> ws_clients;
-static std::mutex ws_clients_mutex;
+struct AudioLevelWebsocket {
+    std::string id_{"0"};
+    std::atomic<double> level_{0.0};
 
-static int callback_ws_audio(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len) {
-    switch (reason) {
-    case LWS_CALLBACK_ESTABLISHED: {
-        std::lock_guard<std::mutex> lk(ws_clients_mutex);
-        ws_clients.push_back(wsi);
-        break;
-    }
-    case LWS_CALLBACK_CLOSED: {
-        std::lock_guard<std::mutex> lk(ws_clients_mutex);
-        ws_clients.erase(std::remove(ws_clients.begin(), ws_clients.end(), wsi), ws_clients.end());
-        break;
-    }
-    case LWS_CALLBACK_SERVER_WRITEABLE: {
-        // send one audio chunk if available
-        if (!g_server) break;
-        std::shared_ptr<std::vector<uint8_t>> chunk;
-        {
-            std::unique_lock<std::mutex> lk(g_server->audio_mutex_);
-            if (g_server->audio_queue_.empty()) break;
-            chunk = g_server->audio_queue_.front();
-            g_server->audio_queue_.pop_front();
-        }
+    bool update(double new_level) {
+        double old_level = level_.load(std::memory_order_relaxed);
 
-        if (chunk && !chunk->empty()) {
-            size_t n = chunk->size();
-            unsigned char* buf = (unsigned char*)malloc(LWS_PRE + n);
-            if (!buf) break;
-            memcpy(buf + LWS_PRE, chunk->data(), n);
-            lws_write(wsi, buf + LWS_PRE, (int)n, LWS_WRITE_BINARY);
-            free(buf);
-        }
-
-        // if there are more chunks, request another writable callback
-        {
-            std::unique_lock<std::mutex> lk(g_server->audio_mutex_);
-            if (!g_server->audio_queue_.empty()) {
-                lws_callback_on_writable(wsi);
+        while (std::abs(old_level - new_level) >= 10.0) {
+            if (level_.compare_exchange_weak(
+                old_level,
+                new_level,
+                std::memory_order_relaxed,
+                std::memory_order_relaxed)) {
+                return true;
             }
         }
 
+        return false;
+    }
+};
+
+static std::mutex ws_clients_mutex;
+static std::map<lws*, std::unique_ptr<AudioLevelWebsocket>> ws_clients;
+
+static int callback_ws_audio(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len) {
+    //printf("callback_ws_audio=%d\n", reason);
+
+    switch (reason) {
+    case LWS_CALLBACK_ESTABLISHED: {
+        char path[256];
+        if (lws_hdr_copy(wsi, path, sizeof(path), WSI_TOKEN_GET_URI)) {
+            //printf("ESTABLISHED %s\n", path);
+        }
+
+        std::lock_guard<std::mutex> lk(ws_clients_mutex);
+        ws_clients.emplace(wsi, new AudioLevelWebsocket());
+        break;
+    }
+    case LWS_CALLBACK_CLOSED: {
+        //printf("CLOSED\n");
+        std::lock_guard<std::mutex> lk(ws_clients_mutex);
+        ws_clients.erase(wsi);
+        break;
+    }
+    case LWS_CALLBACK_SERVER_WRITEABLE: {
+        //printf("SERVER_WRITEABLE\n");
+
+        // send one audio chunk if available
+        if (!g_server) break;
+
+
+        double level = 0.0;
+        {
+            std::lock_guard<std::mutex> lk2(ws_clients_mutex);
+
+            auto it = ws_clients.find(wsi);
+            if (it == ws_clients.end()) {
+                break;
+            }
+
+            auto& ws = it->second;
+            level = ws->level_.load(std::memory_order_relaxed);
+        }
+
+        std::string buffer = json_to_string(nlohmann::json{ {"level", level } });
+
+        if (!buffer.empty()) {
+            size_t n = buffer.size();
+            unsigned char* buf = (unsigned char*)malloc(LWS_PRE + n);
+            if (!buf) break;
+            memcpy(buf + LWS_PRE, buffer.data(), n);
+            lws_write(wsi, buf + LWS_PRE, (int)n, LWS_WRITE_TEXT);
+            free(buf);
+        }
+
+        //lws_callback_on_writable(wsi);
         break;
     }
     case LWS_CALLBACK_RECEIVE: {
@@ -300,6 +335,32 @@ static int callback_ws_audio(struct lws* wsi, enum lws_callback_reasons reason, 
     }
     return 0;
 }
+
+static lws_sorted_usec_list_t sul_check;
+
+void HttpServer::state_check_timer_cb(lws_sorted_usec_list_t* sul) {
+     // request writable for each client
+    std::list<lws*> updates;
+
+    {
+        std::lock_guard<std::mutex> lk2(ws_clients_mutex);
+        for (auto& it : ws_clients) {
+            auto& ws = it.second;
+            auto level = g_server->stream_states_->getAudioLevel(ws->id_);
+            if (ws->update(level)) {
+                updates.emplace_back(it.first);
+            }
+        }
+    }
+
+    for (auto wsi : updates) {
+        lws_callback_on_writable(wsi);
+    }
+
+
+    lws_sul_schedule(g_server->context_, 0, &sul_check, (sul_cb_t)state_check_timer_cb, 100 * LWS_US_PER_MS);
+}
+
 
 void HttpServer::start() {
     thread_ = std::thread([this]() {
@@ -322,21 +383,14 @@ void HttpServer::start() {
             return;
         }
 
+        lws_sul_schedule(context_, 0, &sul_check, (sul_cb_t)state_check_timer_cb, 100 * LWS_US_PER_MS);
+
         running_ = true;
         while (running_) {
-            lws_service(context_, 50);
-            // notify writable to all ws if we have audio
-            std::unique_lock<std::mutex> lk(audio_mutex_);
-            if (!audio_queue_.empty()) {
-                // request writable for each client
-                std::lock_guard<std::mutex> lk2(ws_clients_mutex);
-                for (auto c : ws_clients) {
-                    lws_callback_on_writable(c);
-                }
+            int ret = lws_service(context_, 100);
+            if (ret < 0) {
+                break;
             }
-            lk.unlock();
-            // sleep a little to avoid busy loop
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
 
         lws_context_destroy(context_);
@@ -348,18 +402,4 @@ void HttpServer::stop() {
     running_ = false;
     if (context_) lws_cancel_service(context_);
     if (thread_.joinable()) thread_.join();
-}
-
-void HttpServer::pushAudioChunk(std::shared_ptr<std::vector<uint8_t>> chunk) {
-    if (!chunk) return;
-    {
-        std::lock_guard<std::mutex> lk(audio_mutex_);
-        audio_queue_.push_back(chunk);
-        // keep queue bounded (drop oldest)
-        while (audio_queue_.size() > 200) audio_queue_.pop_front();
-    }
-    if (context_) {
-        // wake service loop so it can schedule writeables
-        lws_cancel_service(context_);
-    }
 }

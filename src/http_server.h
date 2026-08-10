@@ -7,26 +7,30 @@
 #include <condition_variable>
 #include <memory>
 
+class StreamStateStore;
+
 struct lws_context;
 struct lws;
 
+struct lws_sorted_usec_list;
+typedef struct lws_sorted_usec_list lws_sorted_usec_list_t;
+
 class HttpServer {
     // libwebsockets context pointer (opaque)
+    StreamStateStore* stream_states_;
+
     lws_context* context_{nullptr};
     std::thread thread_;
 public:
-    // audio queue for websocket streaming (accessible to internal callbacks)
-    std::deque<std::shared_ptr<std::vector<uint8_t>>> audio_queue_;
-    std::mutex audio_mutex_;
-    std::condition_variable audio_cv_;
     bool running_ = false;
 
     // public for callbacks
-    HttpServer() = default;
+    HttpServer(StreamStateStore* stream_states) : 
+        stream_states_(stream_states) {
+    }
+
+    static void state_check_timer_cb(lws_sorted_usec_list_t* sul);
 
     void start();
     void stop();
-
-    // call from other threads to push raw audio chunks to be sent to WS clients
-    void pushAudioChunk(std::shared_ptr<std::vector<uint8_t>> chunk);
 };

@@ -1,11 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 project(streamer LANGUAGES CXX)
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp")
 
 add_executable(streamer ${SOURCES})
 
-set(CMAKE_CXX_STANDARD 17)
 
 include(FetchContent)
 

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WebSocket Video Preview Test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; background: #111; color: #eee; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:16px; }
+    input, button { font:inherit; padding:8px 10px; border-radius:6px; border:1px solid #555; }
+    input { background:#222; color:#eee; min-width:320px; }
+    button { cursor:pointer; }
+    #status { font-weight:600; }
+    #preview { display:block; max-width:100%; width:960px; min-height:240px; object-fit:contain;
+               background:#000; border:1px solid #444; }
+    #log { white-space:pre-wrap; background:#181818; padding:12px; border-radius:6px;
+           max-height:220px; overflow:auto; }
+  </style>
+</head>
+<body>
+  <h1>Video Preview WebSocket</h1>
+
+  <div class="row">
+    <label>Stream ID:
+      <input id="streamId" value="0">
+    </label>
+    <button id="connect">Connect</button>
+    <button id="disconnect" disabled>Disconnect</button>
+    <span id="status">disconnected</span>
+  </div>
+
+  <img id="preview" alt="Video preview">
+
+  <h3>Log</h3>
+  <div id="log"></div>
+
+<script>
+const streamId = document.getElementById('streamId');
+const connectBtn = document.getElementById('connect');
+const disconnectBtn = document.getElementById('disconnect');
+const statusEl = document.getElementById('status');
+const preview = document.getElementById('preview');
+const logEl = document.getElementById('log');
+
+let ws = null;
+let lastUrl = null;
+
+function log(s) {
+  const t = new Date().toLocaleTimeString();
+  logEl.textContent += `[${t}] ${s}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setStatus(s) {
+  statusEl.textContent = s;
+}
+
+function connect() {
+  if (ws) ws.close();
+
+  // Page is served by the same HTTP server on port 8080.
+  // Therefore ws://<current-host>/... is used.
+  const url = `ws://${location.host}/ws-video/${encodeURIComponent(streamId.value)}`;
+  log(`connecting: ${url}`);
+  setStatus('connecting...');
+
+  ws = new WebSocket(url, "ws-video");
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => {
+    setStatus('connected');
+    connectBtn.disabled = true;
+    disconnectBtn.disabled = false;
+    log('connected');
+  };
+
+  ws.onmessage = async (event) => {
+    try {
+      if (typeof event.data === 'string') {
+        // Expected fallback/debug format: JSON.
+        const msg = JSON.parse(event.data);
+        log(`text message: ${JSON.stringify(msg)}`);
+        return;
+      }
+
+      // Expected preview format: raw image bytes.
+      const blob = new Blob([event.data], { type: 'image/jpeg' });
+      const url = URL.createObjectURL(blob);
+
+      if (lastUrl) URL.revokeObjectURL(lastUrl);
+      lastUrl = url;
+      preview.src = url;
+      log(`preview received: ${event.data.byteLength} bytes`);
+    } catch (e) {
+      log(`message error: ${e}`);
+    }
+  };
+
+  ws.onerror = () => {
+    log('WebSocket error');
+    setStatus('error');
+  };
+
+  ws.onclose = (event) => {
+    log(`closed: code=${event.code}, reason=${event.reason || ''}`);
+    setStatus('disconnected');
+    connectBtn.disabled = false;
+    disconnectBtn.disabled = true;
+    ws = null;
+  };
+}
+
+function disconnect() {
+  if (ws) ws.close();
+}
+
+connectBtn.onclick = connect;
+disconnectBtn.onclick = disconnect;
+</script>
+</body>
+</html>

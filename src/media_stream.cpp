@@ -61,7 +61,7 @@ bool MediaStream::addVideo(const VideoSettings& settings) {
         return false;
     }
 
-    video = std::make_unique<VideoSource>(pipeline, settings);
+    video = std::make_unique<VideoSource>(pipeline, settings, stream_states_, id_);
     if (!video->create()) {
         return false;
     }

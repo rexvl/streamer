@@ -59,10 +59,12 @@ struct http_session {
 
 static int callback_http(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len);
 static int callback_ws_audio(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len);
+static int callback_ws_video(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len);
 
 static struct lws_protocols protocols[] = {
     { "http", callback_http, 0, 0, 0, nullptr },
     { "ws-audio", callback_ws_audio, 0, 0, 0, nullptr },
+    { "ws-video", callback_ws_video, 0, 0, 0, nullptr },
     { nullptr, nullptr, 0, 0, 0, nullptr }
 };
 
@@ -269,8 +271,102 @@ struct AudioLevelWebsocket {
     }
 };
 
+struct VideoPreviewWebsocket {
+    std::string id_{ "0" };
+    std::shared_ptr<VideoPreview> video_preview_;
+    uint64_t sent_item_index_{ 0 };
+
+    bool update(const std::shared_ptr<VideoPreview>& video_preview) {
+        if (video_preview && 
+                (!video_preview_ ||
+                 video_preview_->preview_index_ != video_preview->preview_index_)) {
+            video_preview_ = video_preview;
+            return true;
+        }
+
+        return false;
+    }
+};
+
 static std::mutex ws_clients_mutex;
 static std::map<lws*, std::unique_ptr<AudioLevelWebsocket>> ws_clients;
+static std::map<lws*, std::unique_ptr<VideoPreviewWebsocket>> ws_video_clients;
+
+
+static int callback_ws_video(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len) {
+    switch (reason) {
+    case LWS_CALLBACK_ESTABLISHED: {
+        char path[256];
+        if (lws_hdr_copy(wsi, path, sizeof(path), WSI_TOKEN_GET_URI)) {
+            //printf("ESTABLISHED %s\n", path);
+        }
+
+        std::lock_guard<std::mutex> lk(ws_clients_mutex);
+        ws_video_clients.emplace(wsi, new VideoPreviewWebsocket());
+        break;
+    }
+    case LWS_CALLBACK_CLOSED: {
+        //printf("CLOSED\n");
+        std::lock_guard<std::mutex> lk(ws_clients_mutex);
+        ws_video_clients.erase(wsi);
+        break;
+    }
+    case LWS_CALLBACK_SERVER_WRITEABLE: {
+        //printf("SERVER_WRITEABLE\n");
+
+        // send one audio chunk if available
+        if (!g_server) break;
+
+
+        std::shared_ptr<VideoPreview> video_preview;
+        {
+            std::lock_guard<std::mutex> lk2(ws_clients_mutex);
+
+            auto it = ws_video_clients.find(wsi);
+            if (it == ws_video_clients.end()) {
+                break;
+            }
+
+            auto& ws = it->second;
+            video_preview = ws->video_preview_;
+
+            if (video_preview->preview_index_ == ws->sent_item_index_) {
+                break; // skip if already sent
+            }
+
+            ws->sent_item_index_ = video_preview->preview_index_;
+        }
+
+        if (!video_preview || video_preview->data_.empty()) {
+            break;
+        }
+
+        const auto& data = video_preview->data_;
+        const size_t size = data.size();
+
+        unsigned char* buffer = static_cast<unsigned char*>(malloc(LWS_PRE + size));
+        if (!buffer) {
+            break;
+        }
+
+        memcpy(buffer + LWS_PRE, data.data(), size);
+
+        const int written = lws_write(wsi, buffer + LWS_PRE, static_cast<int>(size), LWS_WRITE_BINARY);
+
+        std::cout << "lws_write returned " << written << " of " << data.size() << " index=" << video_preview->preview_index_ << std::endl;
+
+        free(buffer);
+        break;
+    }
+    case LWS_CALLBACK_RECEIVE: {
+        // ignore incoming data for now
+        break;
+    }
+    default:
+        break;
+    }
+    return 0;
+}
 
 static int callback_ws_audio(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len) {
     //printf("callback_ws_audio=%d\n", reason);
@@ -348,6 +444,14 @@ void HttpServer::state_check_timer_cb(lws_sorted_usec_list_t* sul) {
             auto& ws = it.second;
             auto level = g_server->stream_states_->getAudioLevel(ws->id_);
             if (ws->update(level)) {
+                updates.emplace_back(it.first);
+            }
+        }
+
+        for (auto& it : ws_video_clients) {
+            auto& ws = it.second;
+            auto video_preview = g_server->stream_states_->getVideoPreview(ws->id_);
+            if (ws->update(video_preview)) {
                 updates.emplace_back(it.first);
             }
         }

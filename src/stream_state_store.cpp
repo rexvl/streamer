@@ -27,3 +27,18 @@ double StreamStateStore::getAudioLevel(const std::string& id) {
 
     return 0.0;
 }
+
+void StreamStateStore::setVideoPreview(const std::string& id, std::shared_ptr<VideoPreview>& preview) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    video_previews_[id] = preview;
+}
+
+std::shared_ptr<VideoPreview> StreamStateStore::getVideoPreview(const std::string& id) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto it = video_previews_.find(id);
+    if (it != video_previews_.end()) {
+        return it->second;
+    }
+
+    return std::shared_ptr<VideoPreview>();
+}

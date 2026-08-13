@@ -11,8 +11,6 @@
 
 #include <stream_state_store.h>
 
-static HttpServer* g_server = nullptr;
-
 static std::string mime_type_for_path(const std::string& path) {
     if (path.size() >= 5 && path.rfind(".html") == path.size() - 5) return "text/html";
     if (path.size() >= 3 && path.rfind(".js") == path.size() - 3) return "application/javascript";
@@ -57,19 +55,8 @@ struct http_session {
     std::string body;
 };
 
-static int callback_http(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len);
-static int callback_ws_audio(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len);
-static int callback_ws_video(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len);
-
-static struct lws_protocols protocols[] = {
-    { "http", callback_http, 0, 0, 0, nullptr },
-    { "ws-audio", callback_ws_audio, 0, 0, 0, nullptr },
-    { "ws-video", callback_ws_video, 0, 0, 0, nullptr },
-    { nullptr, nullptr, 0, 0, 0, nullptr }
-};
-
 // HTTP callback: serve API endpoints and static files from ./html
-static int callback_http(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len) {
+int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len) {
     switch (reason) {
     case LWS_CALLBACK_HTTP: 
     {
@@ -250,92 +237,50 @@ static int callback_http(struct lws* wsi, enum lws_callback_reasons reason, void
     return 0;
 }
 
-struct AudioLevelWebsocket {
-    std::string id_{"0"};
-    std::atomic<double> level_{0.0};
-
-    bool update(double new_level) {
-        double old_level = level_.load(std::memory_order_relaxed);
-
-        while (std::abs(old_level - new_level) >= 10.0) {
-            if (level_.compare_exchange_weak(
-                old_level,
-                new_level,
-                std::memory_order_relaxed,
-                std::memory_order_relaxed)) {
-                return true;
-            }
-        }
-
-        return false;
+int HttpServer::callback_ws_video(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len) {
+    auto instansce = static_cast<HttpServer*>(lws_get_protocol(wsi)->user);
+    if (!instansce) {
+        return -1;
     }
-};
 
-struct VideoPreviewWebsocket {
-    std::string id_{ "0" };
-    std::shared_ptr<VideoPreview> video_preview_;
-    uint64_t sent_item_index_{ 0 };
-
-    bool update(const std::shared_ptr<VideoPreview>& video_preview) {
-        if (video_preview && 
-                (!video_preview_ ||
-                 video_preview_->preview_index_ != video_preview->preview_index_)) {
-            video_preview_ = video_preview;
-            return true;
-        }
-
-        return false;
-    }
-};
-
-static std::mutex ws_clients_mutex;
-static std::map<lws*, std::unique_ptr<AudioLevelWebsocket>> ws_clients;
-static std::map<lws*, std::unique_ptr<VideoPreviewWebsocket>> ws_video_clients;
-
-
-static int callback_ws_video(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len) {
     switch (reason) {
     case LWS_CALLBACK_ESTABLISHED: {
         char path[256];
         if (lws_hdr_copy(wsi, path, sizeof(path), WSI_TOKEN_GET_URI)) {
-            //printf("ESTABLISHED %s\n", path);
+            printf("ESTABLISHED %s\n", path);
         }
 
-        std::lock_guard<std::mutex> lk(ws_clients_mutex);
-        ws_video_clients.emplace(wsi, new VideoPreviewWebsocket());
+        instansce->ws_video_clients_.emplace(wsi, new VideoPreviewWebsocket());
+
+        if (!instansce->timer_started_) {
+            printf("start timer\n");
+            instansce->startTimer();
+            instansce->timer_started_ = true;
+        }
         break;
     }
     case LWS_CALLBACK_CLOSED: {
-        //printf("CLOSED\n");
-        std::lock_guard<std::mutex> lk(ws_clients_mutex);
-        ws_video_clients.erase(wsi);
+        printf("CLOSED\n");
+        instansce->ws_video_clients_.erase(wsi);
         break;
     }
     case LWS_CALLBACK_SERVER_WRITEABLE: {
-        //printf("SERVER_WRITEABLE\n");
+        printf("SERVER_WRITEABLE\n");
 
-        // send one audio chunk if available
-        if (!g_server) break;
-
-
-        std::shared_ptr<VideoPreview> video_preview;
-        {
-            std::lock_guard<std::mutex> lk2(ws_clients_mutex);
-
-            auto it = ws_video_clients.find(wsi);
-            if (it == ws_video_clients.end()) {
-                break;
-            }
-
-            auto& ws = it->second;
-            video_preview = ws->video_preview_;
-
-            if (video_preview->preview_index_ == ws->sent_item_index_) {
-                break; // skip if already sent
-            }
-
-            ws->sent_item_index_ = video_preview->preview_index_;
+        // send video_preview if available
+        auto it = instansce->ws_video_clients_.find(wsi);
+        if (it == instansce->ws_video_clients_.end()) {
+            break;
         }
+
+        auto& ws = it->second;
+        auto video_preview = ws->video_preview_;
+
+        if (video_preview->preview_index_ == ws->sent_item_index_) {
+            break; // skip if already sent
+        }
+
+        ws->sent_item_index_ = video_preview->preview_index_;
 
         if (!video_preview || video_preview->data_.empty()) {
             break;
@@ -368,8 +313,11 @@ static int callback_ws_video(struct lws* wsi, enum lws_callback_reasons reason, 
     return 0;
 }
 
-static int callback_ws_audio(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len) {
-    //printf("callback_ws_audio=%d\n", reason);
+int HttpServer::callback_ws_audio(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len) {
+    auto instansce = static_cast<HttpServer*>(lws_get_protocol(wsi)->user);
+    if (!instansce) {
+        return -1;
+    }
 
     switch (reason) {
     case LWS_CALLBACK_ESTABLISHED: {
@@ -378,35 +326,31 @@ static int callback_ws_audio(struct lws* wsi, enum lws_callback_reasons reason, 
             //printf("ESTABLISHED %s\n", path);
         }
 
-        std::lock_guard<std::mutex> lk(ws_clients_mutex);
-        ws_clients.emplace(wsi, new AudioLevelWebsocket());
+        instansce->ws_audio_clients_.emplace(wsi, new AudioLevelWebsocket());
+
+        if (!instansce->timer_started_) {
+            printf("start timer\n");
+            instansce->startTimer();
+            instansce->timer_started_ = true;
+        }
         break;
     }
     case LWS_CALLBACK_CLOSED: {
         //printf("CLOSED\n");
-        std::lock_guard<std::mutex> lk(ws_clients_mutex);
-        ws_clients.erase(wsi);
+        instansce->ws_audio_clients_.erase(wsi);
         break;
     }
     case LWS_CALLBACK_SERVER_WRITEABLE: {
         //printf("SERVER_WRITEABLE\n");
 
         // send one audio chunk if available
-        if (!g_server) break;
-
-
-        double level = 0.0;
-        {
-            std::lock_guard<std::mutex> lk2(ws_clients_mutex);
-
-            auto it = ws_clients.find(wsi);
-            if (it == ws_clients.end()) {
-                break;
-            }
-
-            auto& ws = it->second;
-            level = ws->level_.load(std::memory_order_relaxed);
+        auto it = instansce->ws_audio_clients_.find(wsi);
+        if (it == instansce->ws_audio_clients_.end()) {
+            break;
         }
+
+        auto& ws = it->second;
+        double level = ws->level_.load(std::memory_order_relaxed);
 
         std::string buffer = json_to_string(nlohmann::json{ {"level", level } });
 
@@ -418,8 +362,6 @@ static int callback_ws_audio(struct lws* wsi, enum lws_callback_reasons reason, 
             lws_write(wsi, buf + LWS_PRE, (int)n, LWS_WRITE_TEXT);
             free(buf);
         }
-
-        //lws_callback_on_writable(wsi);
         break;
     }
     case LWS_CALLBACK_RECEIVE: {
@@ -432,48 +374,56 @@ static int callback_ws_audio(struct lws* wsi, enum lws_callback_reasons reason, 
     return 0;
 }
 
-static lws_sorted_usec_list_t sul_check;
-
-void HttpServer::state_check_timer_cb(lws_sorted_usec_list_t* sul) {
-     // request writable for each client
-    std::list<lws*> updates;
-
-    {
-        std::lock_guard<std::mutex> lk2(ws_clients_mutex);
-        for (auto& it : ws_clients) {
-            auto& ws = it.second;
-            auto level = g_server->stream_states_->getAudioLevel(ws->id_);
-            if (ws->update(level)) {
-                updates.emplace_back(it.first);
-            }
-        }
-
-        for (auto& it : ws_video_clients) {
-            auto& ws = it.second;
-            auto video_preview = g_server->stream_states_->getVideoPreview(ws->id_);
-            if (ws->update(video_preview)) {
-                updates.emplace_back(it.first);
-            }
-        }
-    }
-
-    for (auto wsi : updates) {
-        lws_callback_on_writable(wsi);
-    }
-
-
-    lws_sul_schedule(g_server->context_, 0, &sul_check, (sul_cb_t)state_check_timer_cb, 100 * LWS_US_PER_MS);
+void HttpServer::startTimer() {
+    lws_sul_schedule(context_, 0, &sul_, state_check_timer_cb, 50 * LWS_US_PER_MS);
 }
 
+void HttpServer::onTimer() {
+    if (ws_audio_clients_.empty() && ws_video_clients_.empty()) {
+        printf("stop timer\n");
+        timer_started_ = false;
+        return;
+    }
+
+    for (auto& it : ws_audio_clients_) {
+        auto& ws = it.second;
+        auto level = stream_states_->getAudioLevel(ws->id_);
+        if (ws->update(level)) {
+            lws_callback_on_writable(it.first);
+        }
+    }
+
+    for (auto& it : ws_video_clients_) {
+        auto& ws = it.second;
+        auto video_preview = stream_states_->getVideoPreview(ws->id_);
+        if (ws->update(video_preview)) {
+            lws_callback_on_writable(it.first);
+        }
+    }
+
+    startTimer();
+}
+
+void HttpServer::state_check_timer_cb(lws_sorted_usec_list_t* sul) {
+    auto instance = lws_container_of(sul, HttpServer, sul_);
+    if (instance) {
+        instance->onTimer();
+    }
+}
 
 void HttpServer::start() {
     thread_ = std::thread([this]() {
         lws_set_log_level(0, NULL); // disable console logging
 
-        g_server = this;
-
         struct lws_context_creation_info info;
         memset(&info, 0, sizeof(info));
+
+        struct lws_protocols protocols[] = {
+            { "http", callback_http, 0, 0, 0, this },
+            { "ws-audio", callback_ws_audio, 0, 0, 0, this },
+            { "ws-video", callback_ws_video, 0, 0, 0, this },
+            { nullptr, nullptr, 0, 0, 0, nullptr }
+        };
 
         info.port = 8080;
         info.iface = nullptr;
@@ -487,11 +437,9 @@ void HttpServer::start() {
             return;
         }
 
-        lws_sul_schedule(context_, 0, &sul_check, (sul_cb_t)state_check_timer_cb, 100 * LWS_US_PER_MS);
-
         running_ = true;
         while (running_) {
-            int ret = lws_service(context_, 100);
+            int ret = lws_service(context_, 1000);
             if (ret < 0) {
                 break;
             }

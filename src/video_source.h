@@ -24,4 +24,7 @@ struct VideoSource {
 
     static GstPadProbeReturn process_jpeg(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     void setVideoPreview(const uint8_t* buffer, const size_t buffer_size);
+
+    void startVideoPreview();
+    void stopVideoPreview();
 };

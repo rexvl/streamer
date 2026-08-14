@@ -357,6 +357,20 @@ StreamStatus MediaStream::getStatus() {
     return status;
 }
 
+void MediaStream::startVideoPreview() {
+    if (video && !video_preview_started_) {
+        video->startVideoPreview();
+        video_preview_started_ = true;
+    }
+}
+
+void MediaStream::stopVideoPreview() {
+    if (video && video_preview_started_) {
+        video->stopVideoPreview();
+        video_preview_started_ = false;
+    }
+}
+
 MediaStream::~MediaStream() {
     video.reset();
     audio.reset();

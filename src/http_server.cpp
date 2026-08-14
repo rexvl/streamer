@@ -7,7 +7,6 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
-#include <chrono> 
 
 #include <stream_state_store.h>
 
@@ -245,28 +244,29 @@ int HttpServer::callback_ws_video(struct lws* wsi, enum lws_callback_reasons rea
 
     switch (reason) {
     case LWS_CALLBACK_ESTABLISHED: {
-        char path[256];
-        if (lws_hdr_copy(wsi, path, sizeof(path), WSI_TOKEN_GET_URI)) {
-            printf("ESTABLISHED %s\n", path);
+        char buf[256];
+        if (!lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_GET_URI)) {
+            return -1;
         }
 
-        instansce->ws_video_clients_.emplace(wsi, new VideoPreviewWebsocket());
-
-        if (!instansce->timer_started_) {
-            printf("start timer\n");
-            instansce->startTimer();
-            instansce->timer_started_ = true;
+        const auto path = std::string(buf);
+        if (path.rfind("/ws-video/", 0) != 0) {
+            return -1;
         }
+
+        const auto id = path.substr(strlen("/ws-video/"));
+        if (id.empty()) {
+            return -1;
+        }
+
+        instansce->addVideoPreview(wsi, id);
         break;
     }
     case LWS_CALLBACK_CLOSED: {
-        printf("CLOSED\n");
-        instansce->ws_video_clients_.erase(wsi);
+        instansce->removeVideoPreview(wsi);
         break;
     }
     case LWS_CALLBACK_SERVER_WRITEABLE: {
-        printf("SERVER_WRITEABLE\n");
-
         // send video_preview if available
         auto it = instansce->ws_video_clients_.find(wsi);
         if (it == instansce->ws_video_clients_.end()) {
@@ -288,19 +288,16 @@ int HttpServer::callback_ws_video(struct lws* wsi, enum lws_callback_reasons rea
 
         const auto& data = video_preview->data_;
         const size_t size = data.size();
-
-        unsigned char* buffer = static_cast<unsigned char*>(malloc(LWS_PRE + size));
-        if (!buffer) {
-            break;
+        if (size > instansce->buffer_.size() - LWS_PRE) {
+            return -1;
         }
 
-        memcpy(buffer + LWS_PRE, data.data(), size);
+        memcpy(&instansce->buffer_[LWS_PRE], data.data(), size);
 
-        const int written = lws_write(wsi, buffer + LWS_PRE, static_cast<int>(size), LWS_WRITE_BINARY);
-
-        std::cout << "lws_write returned " << written << " of " << data.size() << " index=" << video_preview->preview_index_ << std::endl;
-
-        free(buffer);
+        const int written = lws_write(wsi, &instansce->buffer_[LWS_PRE], size, LWS_WRITE_BINARY);
+        if (written != size) {
+            return -1;
+        }
         break;
     }
     case LWS_CALLBACK_RECEIVE: {
@@ -321,12 +318,22 @@ int HttpServer::callback_ws_audio(struct lws* wsi, enum lws_callback_reasons rea
 
     switch (reason) {
     case LWS_CALLBACK_ESTABLISHED: {
-        char path[256];
-        if (lws_hdr_copy(wsi, path, sizeof(path), WSI_TOKEN_GET_URI)) {
-            //printf("ESTABLISHED %s\n", path);
+        char buf[256];
+        if (!lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_GET_URI)) {
+            return -1;
         }
 
-        instansce->ws_audio_clients_.emplace(wsi, new AudioLevelWebsocket());
+        const auto path = std::string(buf);
+        if (path.rfind("/ws-audio/", 0) != 0) {
+            return -1;
+        }
+
+        const auto id = path.substr(strlen("/ws-audio/"));
+        if (id.empty()) {
+            return -1;
+        }
+
+        instansce->ws_audio_clients_.emplace(wsi, new AudioLevelWebsocket(id));
 
         if (!instansce->timer_started_) {
             printf("start timer\n");
@@ -336,13 +343,10 @@ int HttpServer::callback_ws_audio(struct lws* wsi, enum lws_callback_reasons rea
         break;
     }
     case LWS_CALLBACK_CLOSED: {
-        //printf("CLOSED\n");
         instansce->ws_audio_clients_.erase(wsi);
         break;
     }
     case LWS_CALLBACK_SERVER_WRITEABLE: {
-        //printf("SERVER_WRITEABLE\n");
-
         // send one audio chunk if available
         auto it = instansce->ws_audio_clients_.find(wsi);
         if (it == instansce->ws_audio_clients_.end()) {
@@ -353,14 +357,19 @@ int HttpServer::callback_ws_audio(struct lws* wsi, enum lws_callback_reasons rea
         double level = ws->level_.load(std::memory_order_relaxed);
 
         std::string buffer = json_to_string(nlohmann::json{ {"level", level } });
+        if (buffer.empty()) {
+            return 0;
+        }
 
-        if (!buffer.empty()) {
-            size_t n = buffer.size();
-            unsigned char* buf = (unsigned char*)malloc(LWS_PRE + n);
-            if (!buf) break;
-            memcpy(buf + LWS_PRE, buffer.data(), n);
-            lws_write(wsi, buf + LWS_PRE, (int)n, LWS_WRITE_TEXT);
-            free(buf);
+        if (buffer.size() > instansce->buffer_.size() - LWS_PRE) {
+            return -1;
+        }
+
+        memcpy(&instansce->buffer_[LWS_PRE], buffer.data(), buffer.size());
+
+        const int written = lws_write(wsi, &instansce->buffer_[LWS_PRE], buffer.size(), LWS_WRITE_TEXT);
+        if (written != buffer.size()) {
+            return -1;
         }
         break;
     }
@@ -452,6 +461,49 @@ void HttpServer::start() {
 
 void HttpServer::stop() {
     running_ = false;
-    if (context_) lws_cancel_service(context_);
-    if (thread_.joinable()) thread_.join();
+
+    if (context_) {
+        lws_cancel_service(context_);
+    }
+
+    if (thread_.joinable()) {
+        thread_.join();
+    }
+}
+
+void HttpServer::addVideoPreview(struct lws* wsi, const std::string& stream_id) {
+    auto it = video_previews_.find(stream_id);
+    if (it == video_previews_.end()) {
+        video_previews_[stream_id] = 1;
+        stream_states_->startVideoPreview(stream_id);
+    } else {
+        it->second++;
+    }
+
+    ws_video_clients_.emplace(wsi, new VideoPreviewWebsocket(stream_id));
+
+    if (!timer_started_) {
+        printf("start timer\n");
+        startTimer();
+        timer_started_ = true;
+    }
+}
+
+void HttpServer::removeVideoPreview(struct lws* wsi) {
+    auto it = ws_video_clients_.find(wsi);
+    if (it == ws_video_clients_.end()) {
+        return;
+    }
+
+    auto& ws_info = it->second;
+    auto vp_it = video_previews_.find(ws_info->id_);
+    if (vp_it != video_previews_.end()) {
+        vp_it->second--;
+        if (vp_it->second <= 0) {
+            video_previews_.erase(vp_it);
+            stream_states_->stopVideoPreview(ws_info->id_);
+        }
+    }
+
+    ws_video_clients_.erase(it);
 }

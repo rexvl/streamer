@@ -166,9 +166,18 @@ int main() {
             gst_message_unref(dev_monitor_msg);
         }
 
+        std::set<std::string> video_previes;
+        stream_states.getStartedPreviews(video_previes);
+
         auto cs_it = cur_streams.begin();
         while (cs_it != cur_streams.end()) {
             auto& stream = cs_it->second;
+            if (video_previes.end() == video_previes.find(cs_it->first)) {
+                stream->stopVideoPreview();
+            } else {
+                stream->startVideoPreview();
+            }
+
             if (!stream->ProcessMessage()) {
                 auto status = stream->getStatus();
                 ConfigManager::getInstance().updateStreamStatus(cs_it->first, status);

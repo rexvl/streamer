@@ -244,3 +244,11 @@ bool VideoSource::create() {
 
     return gst_element_link(video_bin, video_tee);
 }
+
+void VideoSource::startVideoPreview() {
+    printf("VideoSource::startVideoPreview\n");
+}
+
+void VideoSource::stopVideoPreview() {
+    printf("VideoSource::stopVideoPreview\n");
+}

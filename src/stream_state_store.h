@@ -20,6 +20,7 @@ class StreamStateStore {
     std::shared_mutex mutex_;
     std::map<std::string, std::atomic<double>> audio_levels_;
     std::map<std::string, std::shared_ptr<VideoPreview>> video_previews_;
+    std::set<std::string> started_video_previews_;
 public:
     StreamStateStore() = default;
     void sync(const std::map<std::string, StreamSettings>& streams);
@@ -27,4 +28,7 @@ public:
     double getAudioLevel(const std::string& id);
     void setVideoPreview(const std::string& id, std::shared_ptr<VideoPreview>& preview);
     std::shared_ptr<VideoPreview> getVideoPreview(const std::string& id);
+    void startVideoPreview(const std::string& stream_id);
+    void stopVideoPreview(const std::string& stream_id);
+    void getStartedPreviews(std::set<std::string>& video_previews);
 };

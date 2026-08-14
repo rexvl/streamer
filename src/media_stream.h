@@ -25,6 +25,8 @@ struct MediaStream {
 
     //std::atomic<double> level_{ 0.0 };
 
+    bool video_preview_started_{false};
+
     MediaStream(const std::string& id, StreamStateStore* stream_states);
 
     bool create(const StreamSettings& settings);
@@ -42,6 +44,8 @@ struct MediaStream {
     bool onError(GstElement* src);
     bool ProcessMessage(uint64_t mask = GST_MESSAGE_INFO | GST_MESSAGE_ERROR | GST_MESSAGE_EOS | GST_MESSAGE_STATE_CHANGED | GST_MESSAGE_ELEMENT);
     bool ProcessError();
+    void startVideoPreview();
+    void stopVideoPreview();
 
     StreamStatus getStatus();
 

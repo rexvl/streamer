@@ -42,3 +42,21 @@ std::shared_ptr<VideoPreview> StreamStateStore::getVideoPreview(const std::strin
 
     return std::shared_ptr<VideoPreview>();
 }
+
+
+void StreamStateStore::startVideoPreview(const std::string& stream_id) {
+    printf("start viedeo preview: stream=%s\n", stream_id.c_str());
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    started_video_previews_.insert(stream_id);
+}
+
+void StreamStateStore::stopVideoPreview(const std::string& stream_id) {
+    printf("stop viedeo preview: stream=%s\n", stream_id.c_str());
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    started_video_previews_.erase(stream_id);
+}
+
+void StreamStateStore::getStartedPreviews(std::set<std::string>& video_previews) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    video_previews = started_video_previews_;
+}

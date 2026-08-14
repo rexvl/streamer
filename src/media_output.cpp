@@ -4,7 +4,7 @@
 #include <cstdio>
 
 MediaOutput::MediaOutput(GstElement* p, const OutputSettings& s) :
-    pipeline(p), settings(s), status(OutputStatus::kUnknown) {
+    pipeline(p), settings(s) {
 }
 
 GstPadProbeReturn MediaOutput::sink_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {

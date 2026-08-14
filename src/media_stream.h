@@ -22,10 +22,8 @@ struct MediaStream {
     std::map<std::string, std::unique_ptr<MediaOutput>> outputs;
     bool playing_{ false };
     int inactivity_count_{ 0 };
-
-    //std::atomic<double> level_{ 0.0 };
-
     bool video_preview_started_{false};
+    StreamStatus status_;
 
     MediaStream(const std::string& id, StreamStateStore* stream_states);
 

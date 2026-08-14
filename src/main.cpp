@@ -36,7 +36,7 @@ void update_output_status(std::map<std::string, std::unique_ptr<MediaStream>>& c
 
         StreamStatus status;
         if (stream->video) {
-            uint32_t frame_count = stream->video->frame_count.exchange(0, std::memory_order_relaxed);
+            uint32_t frame_count = stream->video->consumeFrameCount();
             if (frame_count > 10) {
                 status.video_status = SourceStatus::kSuccess;
                 update = true;

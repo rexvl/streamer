@@ -66,6 +66,7 @@ bool MediaStream::addVideo(const VideoSettings& settings) {
         return false;
     }
 
+    status_.video_status = SourceStatus::kSuccess;
     return true;
 }
 
@@ -79,6 +80,7 @@ bool MediaStream::addAudio(const AudioSettings& settings) {
         return false;
     }
 
+    status_.audio_status = SourceStatus::kSuccess;
     return true;
 }
 
@@ -89,7 +91,7 @@ bool MediaStream::addOutput(const std::string& id, const OutputSettings& setting
     }
 
     if (video) {
-        if (!output->addVideo(video->video_tee)) {
+        if (!output->addVideo(video->get_tee())) {
             return false;
         }
     }
@@ -148,15 +150,15 @@ bool MediaStream::syncOutputs(std::map<std::string, OutputSettings> settings) {
 }
 
 bool MediaStream::onError(GstElement* src) {
-    if (video && video->video_bin == src) {
+    if (video && *video == src) {
         printf("video source failed\n");
-        video->status = SourceStatus::kFail;
+        status_.video_status = SourceStatus::kFail;
         return false;
     }
 
     if (audio && audio->audio_bin == src) {
         printf("audio source failed\n");
-        audio->status = SourceStatus::kFail;
+        status_.audio_status = SourceStatus::kFail;
         return false;
     }
 
@@ -164,7 +166,7 @@ bool MediaStream::onError(GstElement* src) {
         auto& output = it.second;
         if (output->output_bin == src) {
             printf("output:%s failed\n", it.first.c_str());
-            output->status = OutputStatus::kFail;
+            status_.output_status[it.first] = OutputStatus::kFail;
             return false;
         }
     }
@@ -302,7 +304,7 @@ bool MediaStream::update(const StreamSettings& settings) {
             if (!addVideo(*settings.video)) {
                 return false;
             }
-        } else if (video->settings != *settings.video) {
+        } else if (!video->update(*settings.video)) {
             // video settings changed
             if (!removeVideo()) {
                 return false;
@@ -340,21 +342,7 @@ bool MediaStream::update(const StreamSettings& settings) {
 
 
 StreamStatus MediaStream::getStatus() {
-    StreamStatus status;
-
-    if (video) {
-        status.video_status = video->status;
-    }
-
-    if (audio) {
-        status.audio_status = audio->status;
-    }
-
-    for (auto& it : outputs) {
-        status.output_status[it.first] = it.second->status;
-    }
-
-    return status;
+    return status_;
 }
 
 void MediaStream::startVideoPreview() {

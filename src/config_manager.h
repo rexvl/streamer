@@ -28,8 +28,15 @@ struct VideoSettings {
 
     int bitrate{ 0 };
 
-    bool operator != (const VideoSettings& other) {
-        return false;
+    bool operator==(const VideoSettings & other) {
+        return device_id == other.device_id &&
+               device == other.device &&
+               width  == other.width &&
+               height == other.height &&
+               fps_n  == other.fps_n &&
+               fps_d  == other.fps_d &&
+               codec  == other.codec &&
+               bitrate == other.bitrate;
     }
 };
 

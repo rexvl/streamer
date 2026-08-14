@@ -10,7 +10,6 @@ struct MediaOutput {
     GstElement* output_bin{nullptr};
     GstElement* mux{nullptr};
     std::atomic<uint32_t> packet_count{ 0 };
-    OutputStatus status;
 
     MediaOutput(GstElement* p, const OutputSettings& s);
     static GstPadProbeReturn sink_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);

@@ -10,8 +10,9 @@
 #include <cstdio>
 #include <deque>
 
-MediaStream::MediaStream(const std::shared_ptr<PreviewState>& preview) :
-    preview_(preview) {
+MediaStream::MediaStream(const std::shared_ptr<PreviewState>& preview,
+                         const std::shared_ptr<StreamStatus>& status) :
+    preview_(preview), status_(status) {
 }
 
 bool MediaStream::create(const StreamSettings& settings) {
@@ -60,6 +61,31 @@ void MediaStream::syncPreview() {
     }
 }
 
+void MediaStream::updateStatus() {
+    if (video) {
+        uint32_t frame_count = video->consumeFrameCount();
+        if (frame_count > 10) {
+            status_->setVideoStatus(SourceStatus::kSuccess);
+        }
+    }
+
+    if (audio) {
+        uint32_t frame_count = audio->consumeFrameCount();
+        if (frame_count > 10) {
+            status_->setAudioStatus(SourceStatus::kSuccess);
+        }
+    }
+
+    for (auto& outputs_it : outputs) {
+        auto& output = outputs_it.second;
+        uint32_t packet_count = output->packet_count.exchange(0, std::memory_order_relaxed);
+        if (packet_count > 10) {
+            status_->setOutputStatus(outputs_it.first, OutputStatus::kSuccess);
+        }
+    }
+}
+
+
 bool MediaStream::addVideo(const VideoSettings& settings) {
     if (video || !outputs.empty() || !settings.device) {
         return false;
@@ -70,7 +96,7 @@ bool MediaStream::addVideo(const VideoSettings& settings) {
         return false;
     }
 
-    status_.video_status = SourceStatus::kSuccess;
+    status_->setVideoStatus(SourceStatus::kSuccess);
     return true;
 }
 
@@ -84,7 +110,7 @@ bool MediaStream::addAudio(const AudioSettings& settings) {
         return false;
     }
 
-    status_.audio_status = SourceStatus::kSuccess;
+    status_->setAudioStatus(SourceStatus::kSuccess);
     return true;
 }
 
@@ -156,13 +182,13 @@ bool MediaStream::syncOutputs(std::map<std::string, OutputSettings> settings) {
 bool MediaStream::onError(GstElement* src) {
     if (video && *video == src) {
         printf("video source failed\n");
-        status_.video_status = SourceStatus::kFail;
+        status_->setVideoStatus(SourceStatus::kFail);
         return false;
     }
 
     if (audio && *audio == src) {
         printf("audio source failed\n");
-        status_.audio_status = SourceStatus::kFail;
+        status_->setAudioStatus(SourceStatus::kFail);
         return false;
     }
 
@@ -170,7 +196,7 @@ bool MediaStream::onError(GstElement* src) {
         auto& output = it.second;
         if (output->output_bin == src) {
             printf("output:%s failed\n", it.first.c_str());
-            status_.output_status[it.first] = OutputStatus::kFail;
+            status_->setOutputStatus(it.first, OutputStatus::kFail);
             return false;
         }
     }
@@ -259,6 +285,10 @@ bool MediaStream::ProcessMessage(uint64_t mask) {
 
     case GST_MESSAGE_ELEMENT:
     {
+        if (!preview_->isAudioPreviewEnabled()) {
+            break;
+        }
+
         const GstStructure* structure = gst_message_get_structure(msg);
         if (!structure) {
             break;
@@ -340,11 +370,6 @@ bool MediaStream::update(const StreamSettings& settings) {
     }
 
     return syncOutputs(settings.outputs);
-}
-
-
-StreamStatus MediaStream::getStatus() {
-    return status_;
 }
 
 MediaStream::~MediaStream() {

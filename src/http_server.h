@@ -9,7 +9,7 @@
 #include <libwebsockets.h>
 #include <preview_state.h>
 
-class HttpServer {
+class HttpServer : public PreviewUpdateListener {
     std::vector<unsigned char> buffer_;
 
     lws_context* context_{nullptr};
@@ -31,6 +31,11 @@ class HttpServer {
 
         AudioLevelWebsocket(const std::shared_ptr<PreviewState>& preview) :
             preview_(preview) {
+            preview_->addAudioClient();
+        }
+
+        ~AudioLevelWebsocket() {
+            preview_->removeAudioClient();
         }
     };
 
@@ -83,13 +88,8 @@ class HttpServer {
 
     static void state_check_timer_cb(lws_sorted_usec_list_t* sul);
 
-    void startTimer();
-    void onTimer();
-
     bool addVideoPreviewClient(struct lws* wsi, const std::string& stream_id);
     void removeVideoPreviewClient(struct lws* wsi);
-
-    std::shared_ptr<PreviewState> getPreviewState(const std::string& stream_id);
 public:
     HttpServer() : 
         buffer_(1024 * 1024) {
@@ -98,6 +98,5 @@ public:
     void start();
     void stop();
 
-    void addPreviewState(const std::string& stream_id, const std::shared_ptr<PreviewState>& preview_state);
-    void removePreviewState(const std::string& stream_id);
+    void onPreviewUpdated() override;
 };

@@ -1,4 +1,5 @@
 #pragma once
+#include <list>
 #include <nlohmann/json.hpp>
 #include <config_manager.h>
 
@@ -97,7 +98,7 @@ void from_json(const nlohmann::json& j, StreamSettings& c) {
 }
 
 inline
-void from_json(const nlohmann::json& j, std::map<std::string, StreamSettings>& streams)
+void from_json(const nlohmann::json& j, std::list<StreamSettings>& streams)
 {
     streams.clear();
 
@@ -107,8 +108,7 @@ void from_json(const nlohmann::json& j, std::map<std::string, StreamSettings>& s
         StreamSettings stream;
         item.get_to(stream);
         stream.id = std::to_string(stream_id++);
-
-        streams[stream.id] = stream;
+        streams.emplace_back(stream);
     }
 }
 
@@ -297,26 +297,32 @@ void to_json(nlohmann::json& j, const  std::map<std::string, OutputStatus>& outp
 }
 
 inline
-void to_json(nlohmann::json& j, const StreamStatus& info) {
-    j["id"] = info.id;
-
-    if (info.video_status != SourceStatus::kUnknown) {
-        j["video_status"] = info.video_status;
+void to_json(nlohmann::json& j, std::shared_ptr<StreamStatus>& status) {
+    const auto video_status = status->getVideoStatus();
+    if (video_status != SourceStatus::kUnknown) {
+        j["video_status"] = video_status;
     }
 
-    if (info.audio_status != SourceStatus::kUnknown) {
-        j["audio_status"] = info.audio_status;
+    const auto audio_status = status->getAudioStatus();
+    if (audio_status != SourceStatus::kUnknown) {
+        j["audio_status"] = audio_status;
     }
 
-    j["outputs"] = info.output_status;
+    const auto output_status = status->getOutputStatus();
+    j["outputs"] = output_status;
 }
 
 
 inline
-void to_json(nlohmann::json& j, const std::map<std::string, StreamStatus>& streams_status) {
+void to_json(nlohmann::json& j, std::map<std::string, std::shared_ptr<StreamStatus>>& streams_status) {
     j = nlohmann::json::array();
 
-    for (const auto& it : streams_status) {
-        j.push_back(it.second);
+    for (auto& it : streams_status) {
+        if (it.second) {
+            nlohmann::json item;
+            item["id"] = it.first;
+            to_json(item, it.second);
+            j.push_back(std::move(item));
+        }
     }
 }

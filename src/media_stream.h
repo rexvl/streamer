@@ -14,6 +14,7 @@ struct MediaOutput;
 
 struct MediaStream {
     std::shared_ptr<PreviewState> preview_;
+    std::shared_ptr<StreamStatus> status_;
     GstElement* pipeline{nullptr};
     GstBus *bus{nullptr};
     std::unique_ptr<VideoSource> video;
@@ -21,9 +22,9 @@ struct MediaStream {
     std::map<std::string, std::unique_ptr<MediaOutput>> outputs;
     bool playing_{ false };
     int inactivity_count_{ 0 };
-    StreamStatus status_;
 
-    MediaStream(const std::shared_ptr<PreviewState>& preview);
+    MediaStream(const std::shared_ptr<PreviewState>& preview,
+                const std::shared_ptr<StreamStatus>& status);
 
     bool create(const StreamSettings& settings);
     bool start();
@@ -41,8 +42,7 @@ struct MediaStream {
     bool ProcessMessage(uint64_t mask = GST_MESSAGE_INFO | GST_MESSAGE_ERROR | GST_MESSAGE_EOS | GST_MESSAGE_STATE_CHANGED | GST_MESSAGE_ELEMENT);
     bool ProcessError();
     void syncPreview();
-
-    StreamStatus getStatus();
+    void updateStatus();
 
     ~MediaStream();
 };

@@ -42,7 +42,6 @@ public:
     bool update(const VideoSettings& settings);
 
     void syncPreview();
-
     bool operator==(GstElement* other) const;
 
     uint32_t consumeFrameCount();

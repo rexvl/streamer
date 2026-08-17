@@ -27,77 +27,24 @@ static const gchar* get_device_id(const GstStructure* props) {
     return id;
 }
 
-void update_output_status(std::map<std::string, std::unique_ptr<MediaStream>>& cur_streams) {
+void updateStatus(std::map<std::string, std::unique_ptr<MediaStream>>& cur_streams) {
     for (auto& cs_it : cur_streams) {
         auto& stream = cs_it.second;
-
-        bool update = false;
-
-        StreamStatus status;
-        if (stream->video) {
-            uint32_t frame_count = stream->video->consumeFrameCount();
-            if (frame_count > 10) {
-                status.video_status = SourceStatus::kSuccess;
-                update = true;
-            }
-        }
-
-        if (stream->audio) {
-            uint32_t frame_count = stream->audio->consumeFrameCount();
-            if (frame_count > 10) {
-                status.audio_status = SourceStatus::kSuccess;
-                update = true;
-            }
-        }
-
-        for (auto& outputs_it : stream->outputs) {
-            auto& output = outputs_it.second;
-            uint32_t packet_count = output->packet_count.exchange(0, std::memory_order_relaxed);
-            if (packet_count > 10) {
-                status.output_status[outputs_it.first] = OutputStatus::kSuccess;
-                update = true;
-            }
-        }
-
-        if (update) {
-            ConfigManager::getInstance().updateStreamStatus(cs_it.first, status);
-        }
-    }
-}
-
-void sync_previews(HttpServer* server,
-                   std::map<std::string, std::shared_ptr<PreviewState>>& previews,
-                   const std::map<std::string, StreamSettings> active_streams) {
-
-    // Remove states for streams that are no longer active.
-    for (auto it = previews.begin(); it != previews.end();) {
-        if (active_streams.find(it->first) == active_streams.end()) {
-            server->removePreviewState(it->first);
-            it = previews.erase(it);
-        } else {
-            ++it;
-        }
-    }
-
-    // Create states for new active streams.
-    for (const auto& [id, settings] : active_streams) {
-        if (previews.find(id) == previews.end()) {
-            auto preview_state = std::make_shared<PreviewState>();
-            previews.emplace(id, preview_state);
-            server->addPreviewState(id, preview_state);
-        }
+        stream->updateStatus();
     }
 }
 
 int main() {
     SetConsoleOutputCP(CP_UTF8);
 
+    HttpServer http_server;
+    ConfigManager::getInstance().setPreviewListener(&http_server);
+
     ConfigManager::getInstance().load();
 
-    gst_init(nullptr, nullptr);
-
-    HttpServer http_server;
     http_server.start();
+
+    gst_init(nullptr, nullptr);
 
     GstDeviceMonitor* dev_monitor = gst_device_monitor_new();
     gst_device_monitor_add_filter(dev_monitor, "Video/Source", NULL);
@@ -110,9 +57,7 @@ int main() {
 
     std::chrono::steady_clock::time_point last_sync = std::chrono::steady_clock::now();
 
-    std::map<std::string, std::shared_ptr<PreviewState>> previews;
     std::map<std::string, std::unique_ptr<MediaStream>> cur_streams;
-
     bool running = true;
     while (running) {
         GstMessage* dev_monitor_msg = gst_bus_timed_pop(dev_monitor_bus, 10 * GST_MSECOND);
@@ -194,8 +139,6 @@ int main() {
             stream->syncPreview();
 
             if (!stream->ProcessMessage()) {
-                auto status = stream->getStatus();
-                ConfigManager::getInstance().updateStreamStatus(cs_it->first, status);
                 cs_it = cur_streams.erase(cs_it);
                 continue;
             }
@@ -206,10 +149,8 @@ int main() {
         if (last_sync + std::chrono::milliseconds(2000) < cur_time) {
             last_sync = cur_time;
 
-            std::map<std::string, StreamSettings> new_streams;
+            std::map<std::string, StreamContext> new_streams;
             ConfigManager::getInstance().getActiveStreams(new_streams);
-
-            sync_previews(&http_server, previews, new_streams);
 
             // sync existed streams
             auto cs_it = cur_streams.begin();
@@ -221,7 +162,7 @@ int main() {
                     continue;
                 }
 
-                const auto& settings = ns_it->second;
+                const auto& settings = ns_it->second.settings;
                 auto& media_stream = cs_it->second;
 
                 if (!media_stream->update(settings)) {
@@ -235,17 +176,14 @@ int main() {
 
             // create new streams
             for (const auto& ns_it : new_streams) {
-                const auto& settings = ns_it.second;
+                const auto& context = ns_it.second;
 
-                auto& preview = previews[ns_it.first];
-                auto media_stream = std::make_unique<MediaStream>(preview);
-                if (!media_stream->create(settings)) {
+                auto media_stream = std::make_unique<MediaStream>(context.preview, context.status);
+                if (!media_stream->create(context.settings)) {
                     continue;
                 }
 
                 if (!media_stream->start()) {
-                    auto status = media_stream->getStatus();
-                    ConfigManager::getInstance().updateStreamStatus(ns_it.first, status);
                     continue;
                 }
 
@@ -253,7 +191,7 @@ int main() {
                 cur_streams[ns_it.first] = std::move(media_stream);
             }
 
-            update_output_status(cur_streams);
+            updateStatus(cur_streams);
         }
     }
 

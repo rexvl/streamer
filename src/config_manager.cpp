@@ -9,6 +9,10 @@ ConfigManager& ConfigManager::getInstance() {
     return instance;
 }
 
+void ConfigManager::setPreviewListener(PreviewUpdateListener* listener) {
+    preview_listener_ = listener;
+}
+
 void ConfigManager::load() {
     std::ifstream config_if("conf/config.json");
 
@@ -22,62 +26,67 @@ void ConfigManager::load() {
     }
 
     {
-        std::unique_lock<std::shared_mutex> lock(mutex_);
-        config.at("streams").get_to(streams_);
+        std::list<StreamSettings> settings;
+        config.at("streams").get_to(settings);
 
-        for (auto& it : streams_) {
+        std::map<std::string, StreamContext> streams;
+        for (const auto& it : settings) {
+            StreamContext context(it, preview_listener_);
+            streams[it.id]   = std::move(context);
+        }
+
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        for (auto& it : streams) {
             addStreamIndex(it.second);
         }
 
+        streams_ = std::move(streams);
         next_stream_id_ = streams_.size();
     }
 }
 
 void ConfigManager::getStreams(std::map<std::string, StreamSettings>& streams) {
     std::shared_lock<std::shared_mutex> lock(mutex_);
-    streams = streams_;
+    for (auto& it : streams_) {
+        streams[it.first] = it.second.settings;
+    }
+
 }
 
-void ConfigManager::getActiveStreams(std::map<std::string, StreamSettings>& streams) {
-    getStreams(streams);
+void ConfigManager::getActiveStreams(std::map<std::string, StreamContext>& streams) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
 
-    auto it = streams.begin();
-    while (it != streams.end()) {
-        auto& settings = it->second;
+    for (auto& it : streams_) {
+        auto& src_context  = it.second;
+        auto& src_settings = src_context.settings;
 
-        bool source_available = false;
-        if (settings.video) {
-            if (settings.video->device) {
-                source_available = true;
-            }
+
+        StreamSettings settings;
+        if (src_settings.video && src_settings.video->device) {
+            settings.video = src_settings.video;
         }
 
-        if (settings.audio) {
-            if (settings.audio->device) {
-                source_available = true;
-            }
+        if (src_settings.audio && src_settings.audio->device) {
+            settings.audio = src_settings.audio;
         }
 
-        if (!source_available) {
-            it  = streams.erase(it);
+        if (!settings.video && !settings.audio) {
             continue;
         }
 
-        // remove disabled outputs
-        auto& outputs = settings.outputs;
-        auto outputs_it = outputs.begin();
-        while (outputs_it != outputs.end()) {
-            if (!outputs_it->second.enabled) {
-                outputs_it = outputs.erase(outputs_it);
-            } else {
-                outputs_it++;
+        for (auto& it : src_settings.outputs) {
+            const auto& output = it.second;
+            if (output.enabled) {
+                settings.outputs[it.first] = output;
             }
         }
 
-        if (outputs.empty()) {
-            it = streams.erase(it);
-        } else {
-            it++;
+        if (!settings.outputs.empty()) {
+            StreamContext context;
+            context.settings = std::move(settings);
+            context.preview  = src_context.preview;
+            context.status   = src_context.status;
+            streams[it.first] = std::move(context);
         }
     }
 }
@@ -86,27 +95,21 @@ bool ConfigManager::getStream(StreamSettings& stream, const std::string& id) {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     auto it = streams_.find(id);
     if (it != streams_.end()) {
-        stream = it->second;
+        stream = it->second.settings;
         return true;
     }
     return false;
 }
 
 std::string ConfigManager::addStream(StreamSettings& settings) {
+    StreamContext context(settings, preview_listener_);
+
     std::unique_lock<std::shared_mutex> lock(mutex_);
     settings.id = std::to_string(next_stream_id_++);
 
-    addStreamIndex(settings);
+    addStreamIndex(context);
 
-    streams_[settings.id] = settings;
-    // debug: log created stream outputs and enabled flags
-    try {
-        std::cout << "ConfigManager::addStream id=" << settings.id << " outputs=" << settings.outputs.size() << "\n";
-        for (const auto &it : settings.outputs) {
-            std::cout << "  out id=" << it.first << " enabled=" << (it.second.enabled ? "true" : "false") << " url=" << it.second.url << "\n";
-        }
-    } catch (...) {}
-
+    streams_[settings.id] = context;
     return settings.id;
 }
 
@@ -117,24 +120,20 @@ bool ConfigManager::updateStream(const StreamSettings& settings) {
         return false;
     }
 
-    auto& cur_settings = it->second;
-    // debug: log incoming update
-    try {
-        std::cout << "ConfigManager::updateStream id=" << settings.id << " outputs=" << settings.outputs.size() << "\n";
-        for (const auto &it2 : settings.outputs) {
-            std::cout << "  in out id=" << it2.first << " enabled=" << (it2.second.enabled ? "true" : "false") << " url=" << it2.second.url << "\n";
-        }
-    } catch (...) {}
+    auto& context = it->second;
 
-    removeStreamIndex(cur_settings);
+    removeStreamIndex(context.settings);
 
-    cur_settings = settings;
-    addStreamIndex(cur_settings);
+    context.settings = std::move(settings);
+    
+    addStreamIndex(context);
     return true;
 }
 
 
-void ConfigManager::addStreamIndex(StreamSettings& settings) {
+void ConfigManager::addStreamIndex(StreamContext& context) {
+    auto& settings = context.settings;
+
     if (!settings.isEnabled()) {
         return;
     }
@@ -155,20 +154,19 @@ void ConfigManager::addStreamIndex(StreamSettings& settings) {
         }
     }
 
-    StreamStatus status;
-    status.id = settings.id;
-    status.video_status = SourceStatus::kDisabled;
-    status.audio_status = SourceStatus::kDisabled;
-
+    auto video_status = SourceStatus::kDisabled;
     if (settings.video) {
-        status.video_status = (settings.video->device) ? SourceStatus::kSuccess : SourceStatus::kUnavailable;
+        video_status = (settings.video->device) ? SourceStatus::kSuccess : SourceStatus::kUnavailable;
     }
 
+    auto audio_status = SourceStatus::kDisabled;
     if (settings.audio) {
-        status.audio_status = (settings.audio->device) ? SourceStatus::kSuccess : SourceStatus::kUnavailable;
+        audio_status = (settings.audio->device) ? SourceStatus::kSuccess : SourceStatus::kUnavailable;
     }
 
-    stream_status_[settings.id] = status;
+    auto& status = context.status;
+    status->setVideoStatus(video_status);
+    status->setAudioStatus(audio_status);
 }
 
 void ConfigManager::removeStreamIndex(const StreamSettings& settings) {
@@ -206,8 +204,7 @@ bool ConfigManager::removeStream(const std::string& id) {
         return false;
     }
 
-    const auto& settings = it->second;
-    removeStreamIndex(settings);
+    removeStreamIndex(it->second.settings);
 
     streams_.erase(it);
     return true;
@@ -219,11 +216,11 @@ void ConfigManager::addVideoDevice(const std::string& id, const std::string& nam
 
     // update index
     for (auto& it : streams_) {
-        auto& settings = it.second;
+        auto& settings = it.second.settings;
         if (settings.video && settings.video->device_id == id) {
             video_streams_index_[device].insert(it.first);
             settings.video->device = device;
-            stream_status_[it.first].video_status = SourceStatus::kSuccess;
+            it.second.status->setVideoStatus(SourceStatus::kSuccess);
         }
     }
 
@@ -236,11 +233,11 @@ void ConfigManager::addAudioDevice(const std::string& id, const std::string& nam
 
     // update index
     for (auto& it : streams_) {
-        auto& settings = it.second;
+        auto& settings = it.second.settings;
         if (settings.audio && settings.audio->device_id == id) {
             audio_streams_index_[device].insert(it.first);
             settings.audio->device = device;
-            stream_status_[it.first].audio_status = SourceStatus::kSuccess;
+            it.second.status->setAudioStatus(SourceStatus::kSuccess);
         }
     }
 
@@ -253,9 +250,11 @@ void ConfigManager::removeVideoDevice(const std::string& id) {
     if (vsi_it != video_streams_index_.end()) {
         auto& streams = vsi_it->second;
         for (auto& it : streams) {
-            auto& stream = streams_[it];
-            stream.video->device = 0;
-            stream_status_[it].video_status = SourceStatus::kUnavailable;
+            auto& context = streams_[it];
+            if (context.settings.video) {
+                context.settings.video->device = 0;
+            }
+            context.status->setVideoStatus(SourceStatus::kUnavailable);
         }
         video_streams_index_.erase(vsi_it);
     }
@@ -268,9 +267,11 @@ void ConfigManager::removeAudioDevice(const std::string& id) {
     if (asi_it != audio_streams_index_.end()) {
         auto& streams = asi_it->second;
         for (auto& it : streams) {
-            auto& stream = streams_[it];
-            stream.audio->device = 0;
-            stream_status_[it].audio_status = SourceStatus::kUnavailable;
+            auto& context = streams_[it];
+            if (context.settings.audio) {
+                context.settings.audio->device = 0;
+            }
+            context.status->setAudioStatus(SourceStatus::kUnavailable);
         }
         audio_streams_index_.erase(asi_it);
     }
@@ -304,43 +305,29 @@ GstDevice* ConfigManager::getAudioDevice(const std::string& id) {
     return nullptr;
 }
 
-void ConfigManager::updateStreamStatus(const std::string& id, const StreamStatus& new_status) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    auto it = stream_status_.find(id);
-    if (it == stream_status_.end()) {
-        // skip for non-existing stream
-        return;
+std::shared_ptr<PreviewState> ConfigManager::getPreviewState(const std::string& stream_id) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto it = streams_.find(stream_id);
+    if (it != streams_.end()) {
+        return it->second.preview;
     }
 
-    auto& cur_status = it->second;
-    if (new_status.video_status != SourceStatus::kUnknown) {
-        cur_status.video_status = new_status.video_status;
-    }
+    return nullptr;
+}
 
-    if (new_status.audio_status != SourceStatus::kUnknown) {
-        cur_status.audio_status = new_status.audio_status;
-    }
-
-    for (auto& it : new_status.output_status) {
-        if (it.second != OutputStatus::kUnknown) {
-            cur_status.output_status[it.first] = it.second;
-        }
+void ConfigManager::getStreamsStatus(std::map<std::string, std::shared_ptr<StreamStatus>>& stream_status) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    for (auto& it : streams_) {
+        stream_status[it.first] = it.second.status;
     }
 }
 
-void ConfigManager::getStreamsStatus(std::map<std::string, StreamStatus>& stream_status) {
+std::shared_ptr<StreamStatus> ConfigManager::getStreamStatus(const std::string& stream_id) {
     std::shared_lock<std::shared_mutex> lock(mutex_);
-    stream_status = stream_status_;
-}
-
-bool ConfigManager::getStreamStatus(StreamStatus& status, const std::string& id) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
-    auto it = stream_status_.find(id);
-    if (it == stream_status_.end()) {
-        // skip for non-existing stream
-        return false;
+    auto it = streams_.find(stream_id);
+    if (it != streams_.end()) {
+        return it->second.status;
     }
 
-    status = it->second;
-    return true;
+    return nullptr;
 }

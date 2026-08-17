@@ -2,7 +2,10 @@
 #include <string>
 #include <map>
 #include <set>
+#include <atomic>
 #include <shared_mutex>
+
+#include <preview_state.h>
 
 #include <gst/gst.h>
 
@@ -112,16 +115,61 @@ struct DeviceInfo {
     }
 };
 
-struct StreamStatus {
-    std::string id;
-    SourceStatus video_status{ SourceStatus::kUnknown };
-    SourceStatus audio_status{ SourceStatus::kUnknown };
-    std::map<std::string, OutputStatus> output_status;
+class StreamStatus {
+    std::atomic<SourceStatus> video_status_{ SourceStatus::kUnknown };
+    std::atomic<SourceStatus> audio_status_{ SourceStatus::kUnknown };
+
+    std::shared_mutex output_mutex_;
+    std::map<std::string, OutputStatus> output_status_;
+public:
+    StreamStatus() = default;
+
+    void setVideoStatus(SourceStatus status) {
+        video_status_.store(status, std::memory_order_relaxed);
+    }
+
+    SourceStatus getVideoStatus() const {
+        return video_status_.load(std::memory_order_relaxed);
+    }
+
+    void setAudioStatus(SourceStatus status) {
+        audio_status_.store(status, std::memory_order_relaxed);
+    }
+
+    SourceStatus getAudioStatus() const {
+        return audio_status_.load(std::memory_order_relaxed);
+    }
+
+    void setOutputStatus(const std::string& id, OutputStatus status) {
+        std::unique_lock<std::shared_mutex> lk(output_mutex_);
+        output_status_[id] = status;
+    }
+
+    std::map<std::string, OutputStatus> getOutputStatus() {
+        std::shared_lock<std::shared_mutex> lk(output_mutex_);
+        return output_status_;
+    }
+};
+
+struct StreamContext {
+    StreamSettings settings;
+    std::shared_ptr<PreviewState> preview;
+    std::shared_ptr<StreamStatus> status;
+
+    StreamContext() = default;
+
+    StreamContext(const StreamSettings& settings, PreviewUpdateListener* preview_listener) :
+        settings(settings) {
+        preview = std::make_shared<PreviewState>(preview_listener);
+        status  = std::make_shared<StreamStatus>();
+    }
 };
 
 class ConfigManager {
+    PreviewUpdateListener* preview_listener_;
+
     std::shared_mutex mutex_;
-    std::map<std::string, StreamSettings> streams_;
+    std::map<std::string, StreamContext> streams_;
 
     std::map<GstDevice*, std::set<std::string>> video_streams_index_;
     std::map<GstDevice*, std::set<std::string>> audio_streams_index_;
@@ -130,12 +178,10 @@ class ConfigManager {
     std::map<std::string, std::shared_ptr<DeviceInfo>> audio_devices_;
     uint64_t next_stream_id_{0};
 
-    std::map<std::string, StreamStatus> stream_status_;
-
     void addStream(std::map<std::string, std::set<std::string>>& device_streams,
                    const std::string& device_id, const std::string& stream_id);
 
-    void addStreamIndex(StreamSettings& settings);
+    void addStreamIndex(StreamContext& settings);
 
     void removeStreamIndex(const StreamSettings& settings);
 
@@ -144,9 +190,12 @@ class ConfigManager {
 
     bool isActive(StreamSettings& settings);
 
+    std::shared_ptr<StreamContext> getContext(const std::string& id);
+
     ConfigManager() = default;
 public:
     static ConfigManager& getInstance();
+    void setPreviewListener(PreviewUpdateListener* listener);
     void load();
     void getStreams(std::map<std::string, StreamSettings>& streams);
     bool getStream(StreamSettings& stream, const std::string& id);
@@ -155,7 +204,7 @@ public:
     bool removeStream(const std::string& id);
 
     // to get enabeld streams and ouputs only
-    void getActiveStreams(std::map<std::string, StreamSettings>& streams);
+    void getActiveStreams(std::map<std::string, StreamContext>& streams);
 
     // device api
     void addVideoDevice(const std::string& id, const std::string& name, GstDevice* device);
@@ -167,8 +216,9 @@ public:
     GstDevice* getVideoDevice(const std::string& id);
     GstDevice* getAudioDevice(const std::string& id);
 
+    std::shared_ptr<PreviewState> getPreviewState(const std::string& stream_id);
+
     // status api
-    void updateStreamStatus(const std::string& id, const StreamStatus& stream_status);
-    void getStreamsStatus(std::map<std::string, StreamStatus>& stream_status);
-    bool getStreamStatus(StreamStatus& stream_status, const std::string& id);
+    void getStreamsStatus(std::map<std::string, std::shared_ptr<StreamStatus>>& stream_status);
+    std::shared_ptr<StreamStatus> getStreamStatus(const std::string& id);
 };

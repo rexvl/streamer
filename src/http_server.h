@@ -7,52 +7,47 @@
 #include <memory>
 
 #include <libwebsockets.h>
-#include <stream_state_store.h>
+#include <preview_state.h>
 
 class HttpServer {
     std::vector<unsigned char> buffer_;
-
-    StreamStateStore* stream_states_;
 
     lws_context* context_{nullptr};
     std::thread thread_;
 
     struct AudioLevelWebsocket {
-        std::string id_;
-        std::atomic<double> level_{ 0.0 };
+        std::shared_ptr<PreviewState> preview_;
+        double level_{ 0.0 };
 
-        bool update(double new_level) {
-            double old_level = level_.load(std::memory_order_relaxed);
-
-            while (std::abs(old_level - new_level) >= 10.0) {
-                if (level_.compare_exchange_weak(
-                    old_level,
-                    new_level,
-                    std::memory_order_relaxed,
-                    std::memory_order_relaxed)) {
-                    return true;
-                }
+        bool update() {
+            double new_level = preview_->getAudioLevel();
+            if (std::abs(new_level - level_) >= 10.0) {
+                level_ = new_level;
+                return true;
             }
 
             return false;
         }
 
-        AudioLevelWebsocket(const std::string& id) :
-            id_(id) {
+        AudioLevelWebsocket(const std::shared_ptr<PreviewState>& preview) :
+            preview_(preview) {
         }
     };
 
     std::map<lws*, std::unique_ptr<AudioLevelWebsocket>> ws_audio_clients_;
 
     struct VideoPreviewWebsocket {
-        const std::string id_;
-        std::shared_ptr<VideoPreview> video_preview_;
+        std::shared_ptr<PreviewState> preview_state_;
+        std::shared_ptr<const VideoPreview> video_preview_;
         uint64_t sent_item_index_{ 0 };
 
-        bool update(const std::shared_ptr<VideoPreview>& video_preview) {
-            if (video_preview &&
-                (!video_preview_ ||
-                    video_preview_->preview_index_ != video_preview->preview_index_)) {
+        bool update() {
+            auto video_preview = preview_state_->getPreview();
+            if (!video_preview) {
+                return false;
+            }
+
+            if (!video_preview_ || video_preview_->preview_index_ != video_preview->preview_index_) {
                 video_preview_ = video_preview;
                 return true;
             }
@@ -60,8 +55,13 @@ class HttpServer {
             return false;
         }
 
-        VideoPreviewWebsocket(const std::string& id) :
-            id_(id) {
+        VideoPreviewWebsocket(const std::shared_ptr<PreviewState>& preview_state) :
+            preview_state_(preview_state) {
+            preview_state_->addVideoClient();
+        }
+
+        ~VideoPreviewWebsocket() {
+            preview_state_->removeVideoClient();
         }
     };
 
@@ -74,6 +74,9 @@ class HttpServer {
 
     std::atomic<bool> running_ = false;
 
+    std::mutex preview_mutex_;
+    std::map<std::string, std::shared_ptr<PreviewState>> preview_states_;
+
     static int callback_http(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len);
     static int callback_ws_audio(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len);
     static int callback_ws_video(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len);
@@ -83,14 +86,18 @@ class HttpServer {
     void startTimer();
     void onTimer();
 
-    void addVideoPreview(struct lws* wsi, const std::string& stream_id);
-    void removeVideoPreview(struct lws* wsi);
+    bool addVideoPreviewClient(struct lws* wsi, const std::string& stream_id);
+    void removeVideoPreviewClient(struct lws* wsi);
+
+    std::shared_ptr<PreviewState> getPreviewState(const std::string& stream_id);
 public:
-    HttpServer(StreamStateStore* stream_states) : 
-        buffer_(1024 * 1024),
-        stream_states_(stream_states) {
+    HttpServer() : 
+        buffer_(1024 * 1024) {
     }
 
     void start();
     void stop();
+
+    void addPreviewState(const std::string& stream_id, const std::shared_ptr<PreviewState>& preview_state);
+    void removePreviewState(const std::string& stream_id);
 };

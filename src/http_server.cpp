@@ -8,8 +8,6 @@
 #include <sstream>
 #include <iostream>
 
-#include <stream_state_store.h>
-
 static std::string mime_type_for_path(const std::string& path) {
     if (path.size() >= 5 && path.rfind(".html") == path.size() - 5) return "text/html";
     if (path.size() >= 3 && path.rfind(".js") == path.size() - 3) return "application/javascript";
@@ -57,7 +55,7 @@ struct http_session {
 // HTTP callback: serve API endpoints and static files from ./html
 int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len) {
     switch (reason) {
-    case LWS_CALLBACK_HTTP: 
+    case LWS_CALLBACK_HTTP:
     {
         char buf[1024];
 
@@ -192,7 +190,7 @@ int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                 StreamSettings settings = j.get<StreamSettings>();
 
                 std::string id = ConfigManager::getInstance().addStream(settings);
-                send_http_response(wsi, json_to_string(nlohmann::json{{"id", id}}), "application/json", 201);
+                send_http_response(wsi, json_to_string(nlohmann::json{ {"id", id} }), "application/json", 201);
                 return 0;
             }
 
@@ -204,14 +202,15 @@ int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                 settings.id = id;
 
                 if (!ConfigManager::getInstance().updateStream(settings)) {
-                    send_http_response(wsi, json_to_string(nlohmann::json{{"error","Stream not found"}}), "application/json", 404);
+                    send_http_response(wsi, json_to_string(nlohmann::json{ {"error","Stream not found"} }), "application/json", 404);
                     return 0;
                 }
-                send_http_response(wsi, json_to_string(nlohmann::json{{"id", id}, {"status","updated"}}), "application/json");
+                send_http_response(wsi, json_to_string(nlohmann::json{ {"id", id}, {"status","updated"} }), "application/json");
                 return 0;
             }
-        } catch (const std::exception& e) {
-            send_http_response(wsi, json_to_string(nlohmann::json{{"error", e.what()}}), "application/json", 400);
+        }
+        catch (const std::exception& e) {
+            send_http_response(wsi, json_to_string(nlohmann::json{ {"error", e.what()} }), "application/json", 400);
             return 0;
         }
 
@@ -220,7 +219,7 @@ int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason,
         return 0;
     }
 
-    case LWS_CALLBACK_CLOSED_HTTP: 
+    case LWS_CALLBACK_CLOSED_HTTP:
     {
         auto session = (http_session*)lws_wsi_user(wsi);
         if (session) {
@@ -259,11 +258,11 @@ int HttpServer::callback_ws_video(struct lws* wsi, enum lws_callback_reasons rea
             return -1;
         }
 
-        instansce->addVideoPreview(wsi, id);
+        instansce->addVideoPreviewClient(wsi, id);
         break;
     }
     case LWS_CALLBACK_CLOSED: {
-        instansce->removeVideoPreview(wsi);
+        instansce->removeVideoPreviewClient(wsi);
         break;
     }
     case LWS_CALLBACK_SERVER_WRITEABLE: {
@@ -275,6 +274,9 @@ int HttpServer::callback_ws_video(struct lws* wsi, enum lws_callback_reasons rea
 
         auto& ws = it->second;
         auto video_preview = ws->video_preview_;
+        if (!video_preview) {
+            return -1;
+        }
 
         if (video_preview->preview_index_ == ws->sent_item_index_) {
             break; // skip if already sent
@@ -329,11 +331,12 @@ int HttpServer::callback_ws_audio(struct lws* wsi, enum lws_callback_reasons rea
         }
 
         const auto id = path.substr(strlen("/ws-audio/"));
-        if (id.empty()) {
+        auto preview = instansce->getPreviewState(id);
+        if (!preview) {
             return -1;
         }
 
-        instansce->ws_audio_clients_.emplace(wsi, new AudioLevelWebsocket(id));
+        instansce->ws_audio_clients_.emplace(wsi, new AudioLevelWebsocket(preview));
 
         if (!instansce->timer_started_) {
             printf("start timer\n");
@@ -354,7 +357,7 @@ int HttpServer::callback_ws_audio(struct lws* wsi, enum lws_callback_reasons rea
         }
 
         auto& ws = it->second;
-        double level = ws->level_.load(std::memory_order_relaxed);
+        double level = ws->level_;
 
         std::string buffer = json_to_string(nlohmann::json{ {"level", level } });
         if (buffer.empty()) {
@@ -396,16 +399,14 @@ void HttpServer::onTimer() {
 
     for (auto& it : ws_audio_clients_) {
         auto& ws = it.second;
-        auto level = stream_states_->getAudioLevel(ws->id_);
-        if (ws->update(level)) {
+        if (ws->update()) {
             lws_callback_on_writable(it.first);
         }
     }
 
     for (auto& it : ws_video_clients_) {
         auto& ws = it.second;
-        auto video_preview = stream_states_->getVideoPreview(ws->id_);
-        if (ws->update(video_preview)) {
+        if (ws->update()) {
             lws_callback_on_writable(it.first);
         }
     }
@@ -456,7 +457,7 @@ void HttpServer::start() {
 
         lws_context_destroy(context_);
         context_ = nullptr;
-    });
+        });
 }
 
 void HttpServer::stop() {
@@ -471,39 +472,46 @@ void HttpServer::stop() {
     }
 }
 
-void HttpServer::addVideoPreview(struct lws* wsi, const std::string& stream_id) {
-    auto it = video_previews_.find(stream_id);
-    if (it == video_previews_.end()) {
-        video_previews_[stream_id] = 1;
-        stream_states_->startVideoPreview(stream_id);
-    } else {
-        it->second++;
+bool HttpServer::addVideoPreviewClient(struct lws* wsi, const std::string& stream_id) {
+    auto preview_state = getPreviewState(stream_id);
+    if (!preview_state) {
+        return false;
     }
 
-    ws_video_clients_.emplace(wsi, new VideoPreviewWebsocket(stream_id));
+    ws_video_clients_.emplace(wsi, new VideoPreviewWebsocket(preview_state));
 
     if (!timer_started_) {
         printf("start timer\n");
         startTimer();
         timer_started_ = true;
     }
+
+    return true;
 }
 
-void HttpServer::removeVideoPreview(struct lws* wsi) {
+void HttpServer::removeVideoPreviewClient(struct lws* wsi) {
     auto it = ws_video_clients_.find(wsi);
-    if (it == ws_video_clients_.end()) {
-        return;
+    if (it != ws_video_clients_.end()) {
+        ws_video_clients_.erase(it);
+    }
+}
+
+void HttpServer::addPreviewState(const std::string& stream_id, const std::shared_ptr<PreviewState>& preview_state) {
+    std::unique_lock<std::mutex> lk(preview_mutex_);
+    preview_states_[stream_id] = preview_state;
+}
+
+std::shared_ptr<PreviewState> HttpServer::getPreviewState(const std::string& stream_id) {
+    std::unique_lock<std::mutex> lk(preview_mutex_);
+    auto it = preview_states_.find(stream_id);
+    if (it != preview_states_.end()) {
+        return it->second;
     }
 
-    auto& ws_info = it->second;
-    auto vp_it = video_previews_.find(ws_info->id_);
-    if (vp_it != video_previews_.end()) {
-        vp_it->second--;
-        if (vp_it->second <= 0) {
-            video_previews_.erase(vp_it);
-            stream_states_->stopVideoPreview(ws_info->id_);
-        }
-    }
+    return nullptr;
+}
 
-    ws_video_clients_.erase(it);
+void HttpServer::removePreviewState(const std::string & stream_id) {
+    std::unique_lock<std::mutex> lk(preview_mutex_);
+    preview_states_.erase(stream_id);
 }

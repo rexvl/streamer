@@ -15,7 +15,6 @@
 #include <media_output.h>
 #include <media_stream.h>
 #include <http_server.h>
-#include <stream_state_store.h>
 
 #include <windows.h> // SetConsoleOutputCP
 
@@ -44,7 +43,7 @@ void update_output_status(std::map<std::string, std::unique_ptr<MediaStream>>& c
         }
 
         if (stream->audio) {
-            uint32_t frame_count = stream->audio->frame_count.exchange(0, std::memory_order_relaxed);
+            uint32_t frame_count = stream->audio->consumeFrameCount();
             if (frame_count > 10) {
                 status.audio_status = SourceStatus::kSuccess;
                 update = true;
@@ -66,6 +65,30 @@ void update_output_status(std::map<std::string, std::unique_ptr<MediaStream>>& c
     }
 }
 
+void sync_previews(HttpServer* server,
+                   std::map<std::string, std::shared_ptr<PreviewState>>& previews,
+                   const std::map<std::string, StreamSettings> active_streams) {
+
+    // Remove states for streams that are no longer active.
+    for (auto it = previews.begin(); it != previews.end();) {
+        if (active_streams.find(it->first) == active_streams.end()) {
+            server->removePreviewState(it->first);
+            it = previews.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // Create states for new active streams.
+    for (const auto& [id, settings] : active_streams) {
+        if (previews.find(id) == previews.end()) {
+            auto preview_state = std::make_shared<PreviewState>();
+            previews.emplace(id, preview_state);
+            server->addPreviewState(id, preview_state);
+        }
+    }
+}
+
 int main() {
     SetConsoleOutputCP(CP_UTF8);
 
@@ -73,9 +96,7 @@ int main() {
 
     gst_init(nullptr, nullptr);
 
-    StreamStateStore stream_states;
-
-    HttpServer http_server(&stream_states);
+    HttpServer http_server;
     http_server.start();
 
     GstDeviceMonitor* dev_monitor = gst_device_monitor_new();
@@ -89,6 +110,7 @@ int main() {
 
     std::chrono::steady_clock::time_point last_sync = std::chrono::steady_clock::now();
 
+    std::map<std::string, std::shared_ptr<PreviewState>> previews;
     std::map<std::string, std::unique_ptr<MediaStream>> cur_streams;
 
     bool running = true;
@@ -166,17 +188,10 @@ int main() {
             gst_message_unref(dev_monitor_msg);
         }
 
-        std::set<std::string> video_previes;
-        stream_states.getStartedPreviews(video_previes);
-
         auto cs_it = cur_streams.begin();
         while (cs_it != cur_streams.end()) {
             auto& stream = cs_it->second;
-            if (video_previes.end() == video_previes.find(cs_it->first)) {
-                stream->stopVideoPreview();
-            } else {
-                stream->startVideoPreview();
-            }
+            stream->syncPreview();
 
             if (!stream->ProcessMessage()) {
                 auto status = stream->getStatus();
@@ -193,6 +208,8 @@ int main() {
 
             std::map<std::string, StreamSettings> new_streams;
             ConfigManager::getInstance().getActiveStreams(new_streams);
+
+            sync_previews(&http_server, previews, new_streams);
 
             // sync existed streams
             auto cs_it = cur_streams.begin();
@@ -220,7 +237,8 @@ int main() {
             for (const auto& ns_it : new_streams) {
                 const auto& settings = ns_it.second;
 
-                auto media_stream = std::make_unique<MediaStream>(ns_it.first, &stream_states);
+                auto& preview = previews[ns_it.first];
+                auto media_stream = std::make_unique<MediaStream>(preview);
                 if (!media_stream->create(settings)) {
                     continue;
                 }
@@ -236,9 +254,6 @@ int main() {
             }
 
             update_output_status(cur_streams);
-
-            // remove orphans
-            stream_states.sync(new_streams);
         }
     }
 

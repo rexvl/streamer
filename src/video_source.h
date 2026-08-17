@@ -2,18 +2,16 @@
 
 #include <atomic>
 #include <cstdint>
-#include "config_manager.h"
-
-class StreamStateStore;
+#include <config_manager.h>
+#include <preview_state.h>
 
 class VideoSource {
-    const GstElement* pipeline;
-    VideoSettings settings;
-    StreamStateStore* stream_states_;
-    const std::string stream_id_;
-    GstElement* video_bin{ nullptr };
-    GstElement* video_tee{ nullptr };
-    std::atomic<uint32_t> frame_count{ 0 };
+    const GstElement* pipeline_;
+    VideoSettings settings_; 
+    std::shared_ptr<PreviewState> preview_;
+    GstElement* video_bin_{ nullptr };
+    GstElement* video_tee_{ nullptr };
+    std::atomic<uint32_t> frame_count_{ 0 };
     uint64_t preview_index_{0};
 
     GstElement* capture_tee_{ nullptr };
@@ -22,6 +20,8 @@ class VideoSource {
 
     std::atomic<bool> preview_starting_{false};
     std::atomic<bool> preview_stopping_{ false };
+
+    bool preview_enabled_{ false };
 
     GstElement* create_preview();
 
@@ -33,13 +33,15 @@ class VideoSource {
     void remove_preview_branch();
 
     void setVideoPreview(const uint8_t* buffer, const size_t buffer_size);
-public:
-    VideoSource(const GstElement* p, const VideoSettings& vs, StreamStateStore* stream_states, const std::string& stream_id);
-    bool create();
-    bool update(const VideoSettings& vs);
 
     void startVideoPreview();
     void stopVideoPreview();
+public:
+    VideoSource(const GstElement* p, const VideoSettings& settings, const std::shared_ptr<PreviewState>& preview);
+    bool create();
+    bool update(const VideoSettings& settings);
+
+    void syncPreview();
 
     bool operator==(GstElement* other) const;
 

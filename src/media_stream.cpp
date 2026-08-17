@@ -10,10 +10,8 @@
 #include <cstdio>
 #include <deque>
 
-#include <stream_state_store.h>
-
-MediaStream::MediaStream(const std::string& id, StreamStateStore* stream_states) :
-    id_(id), stream_states_(stream_states) {
+MediaStream::MediaStream(const std::shared_ptr<PreviewState>& preview) :
+    preview_(preview) {
 }
 
 bool MediaStream::create(const StreamSettings& settings) {
@@ -56,12 +54,18 @@ bool MediaStream::start() {
     return true;
 }
 
+void MediaStream::syncPreview() {
+    if (video) {
+        video->syncPreview();
+    }
+}
+
 bool MediaStream::addVideo(const VideoSettings& settings) {
     if (video || !outputs.empty() || !settings.device) {
         return false;
     }
 
-    video = std::make_unique<VideoSource>(pipeline, settings, stream_states_, id_);
+    video = std::make_unique<VideoSource>(pipeline, settings, preview_);
     if (!video->create()) {
         return false;
     }
@@ -97,7 +101,7 @@ bool MediaStream::addOutput(const std::string& id, const OutputSettings& setting
     }
 
     if (audio) {
-        if (!output->addAudio(audio->audio_tee)) {
+        if (!output->addAudio(audio->get_tee())) {
             return false;
         }
     }
@@ -156,7 +160,7 @@ bool MediaStream::onError(GstElement* src) {
         return false;
     }
 
-    if (audio && audio->audio_bin == src) {
+    if (audio && *audio == src) {
         printf("audio source failed\n");
         status_.audio_status = SourceStatus::kFail;
         return false;
@@ -275,17 +279,15 @@ bool MediaStream::ProcessMessage(uint64_t mask) {
             break;
         }
 
-        double sum = 0.0;
+        double level = 0.0;
         for (guint i = 0; i < array->n_values; ++i) {
             const GValue* value = &array->values[i];
             if (G_VALUE_HOLDS_DOUBLE(value)) {
-                sum += g_value_get_double(value);
+                level += g_value_get_double(value);
             }
         }
 
-        sum /= channels;
-
-        stream_states_->setAudioLevel(id_, sum);
+        preview_->setAudioLevel(level / channels);
         break;
     }
 
@@ -324,7 +326,7 @@ bool MediaStream::update(const StreamSettings& settings) {
             if (!addAudio(*settings.audio)) {
                 return false;
             }
-        } else if (audio->settings != *settings.audio) {
+        } else if (!audio->update(*settings.audio)) {
             // audio settings changed
             if (!removeAudio()) {
                 return false;
@@ -343,20 +345,6 @@ bool MediaStream::update(const StreamSettings& settings) {
 
 StreamStatus MediaStream::getStatus() {
     return status_;
-}
-
-void MediaStream::startVideoPreview() {
-    if (video && !video_preview_started_) {
-        video->startVideoPreview();
-        video_preview_started_ = true;
-    }
-}
-
-void MediaStream::stopVideoPreview() {
-    if (video && video_preview_started_) {
-        video->stopVideoPreview();
-        video_preview_started_ = false;
-    }
 }
 
 MediaStream::~MediaStream() {

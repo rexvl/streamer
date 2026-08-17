@@ -1,15 +1,12 @@
 #include <iostream>
 #include <vector>
 #include <gst/gst.h>
-
 #include <video_source.h>
-#include <stream_state_store.h>
 
-VideoSource::VideoSource(const GstElement* p, const VideoSettings& vs, StreamStateStore* stream_states, const std::string& stream_id) :
-    pipeline(p),
-    settings(vs),
-    stream_states_(stream_states),
-    stream_id_(stream_id) {
+VideoSource::VideoSource(const GstElement* p, const VideoSettings& settings, const std::shared_ptr<PreviewState>& preview) :
+    pipeline_(p),
+    settings_(settings),
+    preview_(preview) {
 }
 
 bool link(GstElement* tee, std::vector<GstElement*> sinks) {
@@ -52,7 +49,7 @@ GstPadProbeReturn VideoSource::process_jpeg(GstPad* pad, GstPadProbeInfo* info, 
 
 void VideoSource::setVideoPreview(const uint8_t* buffer, const size_t buffer_size) {
     auto video_preview = std::make_shared<VideoPreview>(buffer, buffer_size, preview_index_++);
-    stream_states_->setVideoPreview(stream_id_, video_preview);
+    preview_->setPreview(video_preview);
 }
 
 GstElement* VideoSource::create_preview() {
@@ -202,25 +199,25 @@ GstElement* VideoSource::create_preview() {
 }
 
 bool VideoSource::create() {
-    if (!settings.device) {
+    if (!settings_.device) {
         return false;
     }
 
-    video_bin = gst_bin_new(NULL);
-    if (!video_bin) {
+    video_bin_ = gst_bin_new(NULL);
+    if (!video_bin_) {
         return false;
     }
 
-    if (!gst_bin_add(GST_BIN(pipeline), video_bin)) {
+    if (!gst_bin_add(GST_BIN(pipeline_), video_bin_)) {
         return false;
     }
 
-    GstElement* capture = gst_device_create_element(settings.device, NULL);
+    GstElement* capture = gst_device_create_element(settings_.device, NULL);
     if (!capture) {
         return false;
     }
 
-    GstCaps* capture_caps = gst_device_get_caps(settings.device);
+    GstCaps* capture_caps = gst_device_get_caps(settings_.device);
     if (!capture_caps) {
         return false;
     }
@@ -260,7 +257,7 @@ bool VideoSource::create() {
         return false;
     }
 
-    gst_bin_add_many(GST_BIN(video_bin), capture, capture_tee_, enc, parser, NULL);
+    gst_bin_add_many(GST_BIN(video_bin_), capture, capture_tee_, enc, parser, NULL);
 
     if (!gst_element_link_many(capture, capture_tee_, enc, parser, NULL)) {
         return false;
@@ -277,26 +274,41 @@ bool VideoSource::create() {
         return false;
     }
 
-    if (!gst_element_add_pad(video_bin, source_ghost)) {
+    if (!gst_element_add_pad(video_bin_, source_ghost)) {
         return false;
     }
 
     gst_object_unref(source_pad);
 
-    video_tee = gst_element_factory_make("tee", NULL);
-    if (!video_tee) {
+    video_tee_ = gst_element_factory_make("tee", NULL);
+    if (!video_tee_) {
         return false;
     }
 
-    if (!gst_bin_add(GST_BIN(pipeline), video_tee)) {
+    if (!gst_bin_add(GST_BIN(pipeline_), video_tee_)) {
         return false;
     }
 
-    return gst_element_link(video_bin, video_tee);
+    return gst_element_link(video_bin_, video_tee_);
 }
 
-bool VideoSource::update(const VideoSettings& vs) {
-    return settings == vs;
+bool VideoSource::update(const VideoSettings& settings) {
+    return settings_ == settings;
+}
+
+void VideoSource::syncPreview() {
+    const bool preview_enabled = preview_->isVideoPreviewEnabled();
+    if (preview_enabled_ == preview_enabled) {
+        return;
+    }
+
+    if (preview_enabled) {
+        startVideoPreview();
+    } else {
+        stopVideoPreview();
+    }
+
+    preview_enabled_ = preview_enabled;
 }
 
 void VideoSource::startVideoPreview() {
@@ -308,7 +320,7 @@ void VideoSource::startVideoPreview() {
     }
 
     g_print("[START] before add_probe this=%p\n", this);
-    gulong probe_id = gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_IDLE, start_preview_idle, this, nullptr);    
+    gulong probe_id = gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_IDLE, start_preview_idle, this, nullptr);
     g_print("[START] after add_probe id=%lu this=%p\n", probe_id, this);
 
     gst_object_unref(pad);
@@ -338,14 +350,14 @@ bool VideoSource::add_preview_branch() {
         return false;
     }
 
-    if (!gst_bin_add(GST_BIN(video_bin), preview_bin)) {
+    if (!gst_bin_add(GST_BIN(video_bin_), preview_bin)) {
         gst_object_unref(preview_bin);
         return false;
     }
 
     GstPad* tee_pad = gst_element_request_pad_simple(capture_tee_, "src_%u");
     if (!tee_pad) {
-        gst_bin_remove(GST_BIN(video_bin), preview_bin);
+        gst_bin_remove(GST_BIN(video_bin_), preview_bin);
         return false;
     }
 
@@ -353,7 +365,7 @@ bool VideoSource::add_preview_branch() {
     if (!preview_sink) {
         gst_element_release_request_pad(capture_tee_, tee_pad);
         gst_object_unref(tee_pad);
-        gst_bin_remove(GST_BIN(video_bin), preview_bin);
+        gst_bin_remove(GST_BIN(video_bin_), preview_bin);
         return false;
     }
 
@@ -363,7 +375,7 @@ bool VideoSource::add_preview_branch() {
     if (ret != GST_PAD_LINK_OK) {
         gst_element_release_request_pad(capture_tee_, tee_pad);
         gst_object_unref(tee_pad);
-        gst_bin_remove(GST_BIN(video_bin), preview_bin);
+        gst_bin_remove(GST_BIN(video_bin_), preview_bin);
         return false;
     }
 
@@ -436,17 +448,17 @@ void VideoSource::remove_preview_branch() {
 
     gst_element_set_state(preview_bin, GST_STATE_NULL);
 
-    gst_bin_remove(GST_BIN(video_bin), preview_bin);
+    gst_bin_remove(GST_BIN(video_bin_), preview_bin);
 }
 
 bool VideoSource::operator==(GstElement* other) const {
-    return video_bin == other;
+    return video_bin_ == other;
 }
 
 uint32_t VideoSource::consumeFrameCount() {
-    return frame_count.exchange(0, std::memory_order_relaxed);
+    return frame_count_.exchange(0, std::memory_order_relaxed);
 }
 
 GstElement* VideoSource::get_tee() {
-    return video_tee;
+    return video_tee_;
 }

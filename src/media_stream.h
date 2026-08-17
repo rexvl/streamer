@@ -3,8 +3,8 @@
 #include <string>
 #include <map>
 #include <memory>
-
-#include "config_manager.h"
+#include <preview_state.h>
+#include <config_manager.h>
 
 class StreamStateStore;
 
@@ -13,8 +13,7 @@ class AudioSource;
 struct MediaOutput;
 
 struct MediaStream {
-    const std::string id_;
-    StreamStateStore* stream_states_;
+    std::shared_ptr<PreviewState> preview_;
     GstElement* pipeline{nullptr};
     GstBus *bus{nullptr};
     std::unique_ptr<VideoSource> video;
@@ -22,10 +21,9 @@ struct MediaStream {
     std::map<std::string, std::unique_ptr<MediaOutput>> outputs;
     bool playing_{ false };
     int inactivity_count_{ 0 };
-    bool video_preview_started_{false};
     StreamStatus status_;
 
-    MediaStream(const std::string& id, StreamStateStore* stream_states);
+    MediaStream(const std::shared_ptr<PreviewState>& preview);
 
     bool create(const StreamSettings& settings);
     bool start();
@@ -42,8 +40,7 @@ struct MediaStream {
     bool onError(GstElement* src);
     bool ProcessMessage(uint64_t mask = GST_MESSAGE_INFO | GST_MESSAGE_ERROR | GST_MESSAGE_EOS | GST_MESSAGE_STATE_CHANGED | GST_MESSAGE_ELEMENT);
     bool ProcessError();
-    void startVideoPreview();
-    void stopVideoPreview();
+    void syncPreview();
 
     StreamStatus getStatus();
 

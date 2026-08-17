@@ -52,8 +52,13 @@ struct AudioSettings {
 
     int bitrate{ 0 };
 
-    bool operator != (const AudioSettings& other) {
-        return false;
+    bool operator==(const AudioSettings& other) {
+        return device_id == other.device_id &&
+            device == other.device &&
+            sampleRate == other.sampleRate &&
+            channel_count == other.channel_count &&
+            codec == other.codec &&
+            bitrate == other.bitrate;
     }
 };
 

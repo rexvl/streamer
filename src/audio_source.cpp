@@ -6,32 +6,32 @@
 #include <atomic>
 
 AudioSource::AudioSource(GstElement* p, const AudioSettings& as) :
-    pipeline(p), settings(as), status(SourceStatus::kSuccess) {
+    pipeline_(p), settings_(as) {
 }
 
 GstPadProbeReturn AudioSource::buffer_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
     auto self = static_cast<AudioSource*>(user_data);
     if (self) {
-        self->frame_count.fetch_add(1, std::memory_order_relaxed);
+        self->frame_count_.fetch_add(1, std::memory_order_relaxed);
     }
     return GST_PAD_PROBE_OK;
 }
 
 bool AudioSource::create() {
-    if (!settings.device) {
+    if (!settings_.device) {
         return false;
     }
 
-    audio_bin = gst_bin_new(NULL);
-    if (!audio_bin) {
+    audio_bin_ = gst_bin_new(NULL);
+    if (!audio_bin_) {
         return false;
     }
 
-    if (!gst_bin_add(GST_BIN(pipeline), audio_bin)) {
+    if (!gst_bin_add(GST_BIN(pipeline_), audio_bin_)) {
         return false;
     }
 
-    GstElement* capture = gst_device_create_element(settings.device, NULL);
+    GstElement* capture = gst_device_create_element(settings_.device, NULL);
     if (!capture) {
         return false;
     }
@@ -65,7 +65,7 @@ bool AudioSource::create() {
         return false;
     }
 
-    gst_bin_add_many(GST_BIN(audio_bin), capture, audioconvert, level, enc, parser, NULL);
+    gst_bin_add_many(GST_BIN(audio_bin_), capture, audioconvert, level, enc, parser, NULL);
     if (!gst_element_link_many(capture, audioconvert, level, enc, parser, NULL)) {
         return false;
     }
@@ -80,7 +80,7 @@ bool AudioSource::create() {
         return false;
     }
 
-    if (!gst_element_add_pad(audio_bin, source_ghost)) {
+    if (!gst_element_add_pad(audio_bin_, source_ghost)) {
         return false;
     }
 
@@ -92,14 +92,30 @@ bool AudioSource::create() {
         this,
         NULL);
 
-    audio_tee = gst_element_factory_make("tee", NULL);
-    if (!audio_tee) {
+    audio_tee_ = gst_element_factory_make("tee", NULL);
+    if (!audio_tee_) {
         return false;
     }
 
-    if (!gst_bin_add(GST_BIN(pipeline), audio_tee)) {
+    if (!gst_bin_add(GST_BIN(pipeline_), audio_tee_)) {
         return false;
     }
 
-    return gst_element_link(audio_bin, audio_tee);
+    return gst_element_link(audio_bin_, audio_tee_);
+}
+
+bool AudioSource::update(const AudioSettings& settings) {
+    return settings_ == settings;
+}
+
+uint32_t AudioSource::consumeFrameCount() {
+    return frame_count_.exchange(0, std::memory_order_relaxed);
+}
+
+GstElement* AudioSource::get_tee() {
+    return audio_tee_;
+}
+
+bool AudioSource::operator==(const GstElement* other) const {
+    return audio_bin_ == other;
 }

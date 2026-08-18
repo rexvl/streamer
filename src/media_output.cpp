@@ -192,16 +192,25 @@ bool MediaOutput::addAudio(GstElement* audio_tee) {
 GstPadProbeReturn MediaOutput::tee_pad_block(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
     auto self = static_cast<MediaOutput*>(user_data);
 
-    if (!self->audio_tee_blocked_) {
+    if (pad == self->audio_tee_pad_) {
         self->audio_tee_blocked_ = true;
-        printf("Audio stream from tee successfully BLOCKED. Launching std::async for safe restart...\n");
-
-        // Run restart asynchronously to prevent locking the blocked audio capture thread
-        self->restart_future_ = std::async(std::launch::async, [self]() {
-            printf("[std::async] Safe context reached. Restarting entire bin...\n");
-            self->restart();
-            });
+        printf("Audio source tee BLOCKED\n");
+    } else if (pad == self->video_tee_pad_) {
+        self->video_tee_blocked_ = true;
+        printf("Video source tee BLOCKED\n");
     }
+
+    if (!self->video_tee_blocked_ || !self->audio_tee_blocked_) {
+        return GST_PAD_PROBE_OK;
+    }
+
+    printf("Launching std::async for safe restart...\n");
+
+    // Run restart asynchronously to prevent locking the blocked audio capture thread
+    self->restart_future_ = std::async(std::launch::async, [self]() {
+        printf("[std::async] Safe context reached. Restarting entire bin...\n");
+        self->restart();
+    });
 
     return GST_PAD_PROBE_OK;
 }
@@ -222,12 +231,19 @@ void MediaOutput::restart() {
         printf("Audio source tee UNBLOCKED, data streaming resumed\n");
     }
 
+    if (video_tee_blocked_ && video_probe_id_ > 0) {
+        gst_pad_remove_probe(video_tee_pad_, video_probe_id_);
+        video_probe_id_ = 0;
+        printf("Video source tee UNBLOCKED, data streaming resumed\n");
+    }
+
     audio_tee_blocked_ = false;
+    video_tee_blocked_ = false;
 }
 
 bool MediaOutput::blockTeePads() {
     video_tee_blocked_ = true;
-    audio_tee_blocked_ = false;
+    audio_tee_blocked_ = true;
 
     if (audio_tee_pad_) {
         // Enforce a hard downstream block right at the audio source tee pad exit
@@ -238,9 +254,22 @@ bool MediaOutput::blockTeePads() {
             this,
             nullptr
         );
+
         printf("Probe added on audio source tee pad, id=%lu\n", audio_probe_id_);
-        return true;
+        audio_tee_blocked_ = false;
     }
 
+    if (video_tee_pad_) {
+        video_probe_id_ = gst_pad_add_probe(
+            video_tee_pad_,
+            GST_PAD_PROBE_TYPE_BLOCK_DOWNSTREAM, // Blocks buffers before they touch output_bin_
+            tee_pad_block,
+            this,
+            nullptr
+        );
+
+        printf("Probe added on audio source tee pad, id=%lu\n", audio_probe_id_);
+        video_tee_blocked_ = false;
+    }
     return false;
 }

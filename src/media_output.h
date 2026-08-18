@@ -16,6 +16,7 @@ struct MediaOutput {
     bool video_tee_blocked_{ false };
     bool audio_tee_blocked_{ false };
     gulong audio_probe_id_{ 0 };
+    gulong video_probe_id_{ 0 };
     std::future<void> restart_future_;
     uint64_t passed_count_{ 0 };
 

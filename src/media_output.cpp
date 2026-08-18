@@ -1,4 +1,4 @@
-#include "media_output.h"
+﻿#include "media_output.h"
 
 #include <gst/gst.h>
 #include <cstdio>
@@ -115,6 +115,14 @@ bool MediaOutput::addVideo(GstElement* video_tee) {
     if (!vqueue_src_pad) {
         return false;
     }
+
+    gst_pad_add_probe(
+        vqueue_src_pad,
+        GST_PAD_PROBE_TYPE_BUFFER,
+        drop_until_keyframe,
+        this,
+        nullptr
+    );
 
     auto mux_video_pad = gst_element_request_pad_simple(mux_, "video");
     if (!mux_video_pad) {
@@ -270,6 +278,33 @@ bool MediaOutput::blockTeePads() {
 
         printf("Probe added on audio source tee pad, id=%lu\n", audio_probe_id_);
         video_tee_blocked_ = false;
+        waiting_for_keyframe_ = true;
     }
     return false;
+}
+
+GstPadProbeReturn MediaOutput::drop_until_keyframe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
+    auto self = static_cast<MediaOutput*>(user_data);
+
+    if (!(GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER))
+        return GST_PAD_PROBE_OK;
+
+    GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+
+    if (!buffer)
+        return GST_PAD_PROBE_OK;
+
+    if (!self->waiting_for_keyframe_) {
+        return GST_PAD_PROBE_OK;
+    }
+
+    if (GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT)) {
+        return GST_PAD_PROBE_DROP;
+    }
+
+    printf("VIDEO KEYFRAME FOUND, resume video\n");
+
+    self->waiting_for_keyframe_ = false;
+
+    return GST_PAD_PROBE_OK;
 }

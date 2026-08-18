@@ -19,10 +19,12 @@ struct MediaOutput {
     gulong video_probe_id_{ 0 };
     std::future<void> restart_future_;
     uint64_t passed_count_{ 0 };
+    bool waiting_for_keyframe_{ true };
 
     MediaOutput(GstElement* p, const OutputSettings& s);
     static GstPadProbeReturn sink_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static GstPadProbeReturn queue_output_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
+    static GstPadProbeReturn drop_until_keyframe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
 
     bool create();
     bool addVideo(GstElement* video_tee);

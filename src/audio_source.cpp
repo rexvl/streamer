@@ -101,7 +101,19 @@ bool AudioSource::create() {
         return false;
     }
 
-    return gst_element_link(audio_bin_, audio_tee_);
+    // add dummy sink to avoid getting EOS on output issue
+    auto fakesink = gst_element_factory_make("fakesink", NULL);
+
+    g_object_set(fakesink,
+                 "sync", FALSE,
+                 "async", FALSE,
+                 nullptr);
+
+    if (!gst_bin_add(GST_BIN(pipeline_), fakesink)) {
+        return false;
+    }
+
+    return gst_element_link_many(audio_bin_, audio_tee_, fakesink, NULL);
 }
 
 bool AudioSource::update(const AudioSettings& settings) {

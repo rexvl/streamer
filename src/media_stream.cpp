@@ -1,4 +1,4 @@
-#include <media_stream.h>
+﻿#include <media_stream.h>
 
 #include <video_source.h>
 #include <audio_source.h>
@@ -15,6 +15,25 @@ MediaStream::MediaStream(const std::shared_ptr<PreviewState>& preview,
     preview_(preview), status_(status) {
 }
 
+GstBusSyncReply MediaStream::bus_sync_handler(GstBus* bus, GstMessage* message, gpointer user_data) {
+    auto self = static_cast<MediaStream*>(user_data);
+
+    if (GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR) {
+        GstObject* src = GST_MESSAGE_SRC(message);
+
+        for (auto& it : self->outputs) {
+            auto& output = it.second;
+             // Check if the failed element belongs to our output_bin
+            if (gst_object_has_as_ancestor(src, GST_OBJECT(output->output_bin_))) {
+                printf("[SYNC] Network error! Immediate hardware block.\n");
+                output->blockTeePads();
+                break;
+            }
+        }
+    }
+    return GST_BUS_PASS;
+}
+
 bool MediaStream::create(const StreamSettings& settings) {
     pipeline = gst_pipeline_new(nullptr);
     if (!pipeline) {
@@ -25,6 +44,8 @@ bool MediaStream::create(const StreamSettings& settings) {
     if (!bus) {
         return false;
     }
+
+    gst_bus_set_sync_handler(bus, bus_sync_handler, this, nullptr);
 
     if (settings.video && settings.video->device) {
         if (!addVideo(*settings.video)) {
@@ -78,7 +99,7 @@ void MediaStream::updateStatus() {
 
     for (auto& outputs_it : outputs) {
         auto& output = outputs_it.second;
-        uint32_t packet_count = output->packet_count.exchange(0, std::memory_order_relaxed);
+        uint32_t packet_count = output->packet_count_.exchange(0, std::memory_order_relaxed);
         if (packet_count > 10) {
             status_->setOutputStatus(outputs_it.first, OutputStatus::kSuccess);
         }
@@ -194,10 +215,10 @@ bool MediaStream::onError(GstElement* src) {
 
     for (auto& it : outputs) {
         auto& output = it.second;
-        if (output->output_bin == src) {
+        if (output->output_bin_ == src) {
             printf("output:%s failed\n", it.first.c_str());
             status_->setOutputStatus(it.first, OutputStatus::kFail);
-            return false;
+            return true;
         }
     }
 
@@ -248,11 +269,14 @@ bool MediaStream::ProcessMessage(uint64_t mask) {
             return false;
         }
 
-        return onError(stack[1]);
+        bool result = onError(stack[1]);
+        gst_message_unref(msg);
+        return result;
     }
 
     case GST_MESSAGE_EOS:
         gst_message_unref(msg);
+        printf("!!!EOS!!!\n");
         return false;
 
     case GST_MESSAGE_STATE_CHANGED:

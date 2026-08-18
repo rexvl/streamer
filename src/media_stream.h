@@ -26,6 +26,8 @@ struct MediaStream {
     MediaStream(const std::shared_ptr<PreviewState>& preview,
                 const std::shared_ptr<StreamStatus>& status);
 
+    static GstBusSyncReply bus_sync_handler(GstBus* bus, GstMessage* message, gpointer user_data);
+
     bool create(const StreamSettings& settings);
     bool start();
 

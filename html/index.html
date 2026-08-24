@@ -50,12 +50,18 @@
               <div class="video-preview">Preview (16:9)</div>
 
               <div class="form-row small-compact">
-                <label class="form-label">Width</label>
-                <input id="video-width" type="number" class="form-control" />
-              </div>
-              <div class="form-row small-compact">
-                <label class="form-label">Height</label>
-                <input id="video-height" type="number" class="form-control" />
+                <label class="form-label">Resolution</label>
+                <div class="combo-wrapper" style="display:flex;gap:8px;align-items:center;">
+                  <input id="video-resolution" type="text" class="form-control" placeholder="e.g. 1920x1080" />
+                  <button id="video-resolution-btn" type="button" class="combo-btn" aria-label="Show presets">▾</button>
+                  <ul id="video-resolution-menu" class="combo-menu" role="listbox" aria-hidden="true">
+                    <li data-val="1920x1080">1920x1080</li>
+                    <li data-val="1280x720">1280x720</li>
+                    <li data-val="854x480">854x480</li>
+                    <li data-val="640x360">640x360</li>
+                    <li data-val="426x240">426x240</li>
+                  </ul>
+                </div>
               </div>
               <div class="form-row small-compact">
                 <label class="form-label">FPS</label>
@@ -64,8 +70,9 @@
               <div class="form-row small-compact">
                 <label class="form-label">Codec</label>
                 <select id="video-codec" class="form-control">
-                  <option value="avc">AVC (H.264)</option>
-                  <option value="hevc">HEVC (H.265)</option>
+                  <option value="x264enc">x264 (H.264, software)</option>
+                  <option value="nvautogpuh264enc">NVENC H.264 (nvautogpuh264enc)</option>
+                  <option value="qsvh264enc">QSV H.264 (qsvh264enc)</option>
                 </select>
               </div>
               <div class="form-row small-compact">

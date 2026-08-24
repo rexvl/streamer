@@ -7,11 +7,13 @@ inline
 void from_json(const nlohmann::json& j, VideoSettings::Codec& c) {
     std::string s = j.get<std::string>();
 
-    if (s == "avc")
-        c = VideoSettings::Codec::AVC;
-    else if (s == "hevc")
-        c = VideoSettings::Codec::HEVC;
-    else
+    if (s == "x264enc") {
+        c = VideoSettings::Codec::x264enc;
+    } else if (s == "nvautogpuh264enc") {
+        c = VideoSettings::Codec::nvautogpuh264enc;
+    } else if (s == "qsvh264enc") {
+        c = VideoSettings::Codec::qsvh264enc;
+    } else
         throw std::runtime_error("Unknown video codec: " + s);
 }
 
@@ -114,10 +116,12 @@ void from_json(const nlohmann::json& j, std::list<StreamSettings>& streams)
 
 inline
 void to_json(nlohmann::json& j, const VideoSettings::Codec& c) {
-    if (c == VideoSettings::Codec::AVC)
-        j = "avc";
-    else if (c == VideoSettings::Codec::HEVC) 
-        j = "hevc";
+    if (c == VideoSettings::Codec::x264enc)
+        j = "x264enc";
+    else if (c == VideoSettings::Codec::nvautogpuh264enc) 
+        j = "nvautogpuh264enc";
+    else if (c == VideoSettings::Codec::qsvh264enc)
+        j = "qsvh264enc";
     else
         throw std::runtime_error("Unknown video codec");
 }

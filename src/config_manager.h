@@ -26,10 +26,10 @@ struct VideoSettings {
     int fps_n{ 0 };
     int fps_d{ 1 };
 
-    enum class Codec { AVC, HEVC };
+    enum class Codec { x264enc, nvautogpuh264enc, qsvh264enc };
     Codec codec;
 
-    int bitrate{ 0 };
+    int bitrate{ 0 }; // kbps
 
     bool operator==(const VideoSettings & other) {
         return device_id == other.device_id &&

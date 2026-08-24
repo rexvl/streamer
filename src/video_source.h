@@ -36,6 +36,8 @@ class VideoSource {
 
     void startVideoPreview();
     void stopVideoPreview();
+
+    static GstElement* createEncoder(const VideoSettings& settings);
 public:
     VideoSource(const GstElement* p, const VideoSettings& settings, const std::shared_ptr<PreviewState>& preview);
     bool create();

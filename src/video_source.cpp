@@ -198,6 +198,61 @@ GstElement* VideoSource::create_preview() {
     return preview_bin;
 }
 
+GstElement* VideoSource::createEncoder(const VideoSettings& settings) {
+    GstElement* enc = nullptr;
+
+    const guint fps = (settings.fps_n > 0 && settings.fps_d > 0) ? (settings.fps_n / settings.fps_d) : 30;
+    const guint keyint_frames = fps * 2;
+
+    switch (settings.codec) { 
+        case VideoSettings::Codec::nvautogpuh264enc:
+        {
+            enc = gst_element_factory_make("nvautogpuh264enc", NULL);
+            if (enc) {
+                g_object_set(G_OBJECT(enc),
+                    "bitrate", settings.bitrate * 1000,      // NVENC requires bps
+                    "rc-mode", 1,                            // 1 = CBR (Constant Bitrate)
+                    "gop-size", keyint_frames,               // or "idr-interval"
+                    "iframeinterval", keyint_frames,         // I-frame interval
+                    NULL);
+            }
+            break;
+        }
+
+        case VideoSettings::Codec::qsvh264enc:
+        {
+            enc = gst_element_factory_make("qsvh264enc", NULL);
+            if (enc) {
+                g_object_set(G_OBJECT(enc),
+                    "bitrate", settings.bitrate,       // QSV requires Kbps
+                    "rate-control", 1,                 // 1 = CBR (или MFX_RATECONTROL_CBR)
+                    "gop-size", keyint_frames,         // GOP in frames
+                    "gop-ref-dist", 1,                 // disable B-frames for strict CBR with no delays
+                    NULL);
+            }
+            break;
+        }
+
+        case VideoSettings::Codec::x264enc:
+        default:
+        {
+            enc = gst_element_factory_make("x264enc", NULL);
+            if (enc) {
+                g_object_set(enc,
+                    "bitrate", settings.bitrate,
+                    "key-int-max", keyint_frames,
+                    "pass", 0,
+                    "speed-preset", "ultrafast",
+                    "tune", "zerolatency",
+                    NULL);
+            }
+            break;
+        }
+    }
+
+    return enc;
+}
+
 bool VideoSource::create() {
     if (!settings_.device) {
         return false;
@@ -227,30 +282,10 @@ bool VideoSource::create() {
         return false;
     }
 
-    GstElement* enc = gst_element_factory_make("x264enc", NULL);
+    GstElement* enc = createEncoder(settings_);
     if (!enc) {
         return false;
     }
-
-    g_object_set(enc,
-        "bitrate", 1000,
-        NULL);
-
-    gst_util_set_object_arg(
-        G_OBJECT(enc),
-        "speed-preset",
-        "ultrafast"
-    );
-
-    gst_util_set_object_arg(
-        G_OBJECT(enc),
-        "tune",
-        "zerolatency"
-    );
-
-    g_object_set(enc,
-        "key-int-max", 60,
-        NULL);
 
     GstElement* parser = gst_element_factory_make("h264parse", NULL);
     if (!parser) {

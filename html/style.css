@@ -85,6 +85,16 @@ button.danger{background:var(--danger);border-color:rgba(255,107,107,0.2)}
 /* inputs inside cards */
 .card input, .card select{width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:#0b0d0f;color:#e6eef6}
 
+/* combo input with dropdown button */
+.combo-wrapper{position:relative;display:flex;align-items:center}
+.combo-wrapper .form-control{flex:1;padding-right:36px}
+.combo-btn{position:relative;flex:0 0 34px;height:36px;border-radius:6px;border:1px solid var(--border);background:#0b0d0f;color:#e6eef6;cursor:pointer;padding:0 6px;margin-left:6px}
+.combo-btn:hover{background:#111317}
+.combo-menu{position:absolute;top:calc(100% + 6px);right:0;left:0;z-index:60;list-style:none;margin:0;padding:6px;border-radius:6px;background:var(--card);border:1px solid var(--border);max-height:200px;overflow:auto;display:none}
+.combo-menu[aria-hidden="false"]{display:block}
+.combo-menu li{padding:8px;border-radius:6px;cursor:pointer}
+.combo-menu li:hover{background:#0f1214}
+
 /* remove number input spinners for video controls to avoid accidental changes */
 #video-settings input[type="number"]::-webkit-outer-spin-button,
 #video-settings input[type="number"]::-webkit-inner-spin-button {

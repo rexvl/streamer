@@ -254,10 +254,51 @@ $(function(){
         await renderStreamView(id);
       });
 
-      // populate video numeric inputs and codec/bitrate controls
+      // populate video resolution input, codec/bitrate controls
       // values from s.video: width,height,fps_n,fps_d,codec,bitrate
-      $('#video-width').val(s.video && s.video.width ? s.video.width : '');
-      $('#video-height').val(s.video && s.video.height ? s.video.height : '');
+      const presets = ['1920x1080','1280x720','854x480','640x360','426x240'];
+      if (s.video && (s.video.width || s.video.height)) {
+        const wv = s.video.width ? String(s.video.width) : '';
+        const hv = s.video.height ? String(s.video.height) : '';
+        const resText = `${wv}x${hv}`;
+        $('#video-resolution').val(resText);
+      } else {
+        $('#video-resolution').val('');
+      }
+      // build menu items for combo button (safe to rebuild each render)
+      try {
+        const $resInput = $('#video-resolution');
+        const $btn = $('#video-resolution-btn');
+        const $menu = $('#video-resolution-menu');
+        if ($menu.length) {
+          $menu.empty();
+          presets.forEach(p => { $menu.append($('<li/>').attr('data-val', p).text(p)); });
+        }
+
+        // toggle menu when button clicked
+        $btn.off('click.videoRes').on('click.videoRes', function(e){
+          e.preventDefault();
+          if ($menu.attr('aria-hidden') === 'false') {
+            $menu.attr('aria-hidden', 'true');
+          } else {
+            $menu.attr('aria-hidden', 'false');
+          }
+        });
+
+        // choose preset
+        $menu.off('click.videoRes').on('click.videoRes', 'li', function(){
+          const v = $(this).attr('data-val');
+          $resInput.val(v).trigger('change');
+          $menu.attr('aria-hidden', 'true');
+        });
+
+        // hide when clicking outside
+        $(document).off('click.videoResOuter').on('click.videoResOuter', function(ev){
+          if (!$(ev.target).closest('.combo-wrapper').length) {
+            $menu.attr('aria-hidden', 'true');
+          }
+        });
+      } catch (e) { console.debug('resolution combo init failed', e); }
       // fps: single text field accepts integer (30) or fraction (30000/1001)
       let fpsVal = '';
       if (s.video && s.video.fps_n) {
@@ -265,20 +306,26 @@ $(function(){
         else fpsVal = `${s.video.fps_n}`;
       }
       $('#video-fps').val(fpsVal);
-      $('#video-codec').val(s.video && s.video.codec ? s.video.codec : 'avc');
+      $('#video-codec').val(s.video && s.video.codec ? s.video.codec : 'x264enc');
       $('#video-bitrate').val(s.video && s.video.bitrate ? s.video.bitrate : '');
 
       // attach handlers: update stream when any video setting changes
-      $('#video-width, #video-height, #video-fps, #video-codec, #video-bitrate').off('change').on('change', async function(){
+      $('#video-resolution, #video-fps, #video-codec, #video-bitrate').off('change').on('change', async function(){
         s.video = s.video || {};
-        const w = parseInt($('#video-width').val()) || 0;
-        const h = parseInt($('#video-height').val()) || 0;
+        // parse resolution from input (allow formats like 1920x1080, 1920 X 1080, 1920×1080)
+        const raw = String($('#video-resolution').val() || '').trim();
+        const toParse = raw;
+        let w = 0, h = 0;
+        const m = toParse.match(/^(\d+)\s*[xX×]\s*(\d+)$/);
+        if (m) { w = parseInt(m[1], 10) || 0; h = parseInt(m[2], 10) || 0; }
         const fpsText = String($('#video-fps').val() || '').trim();
         const codec = $('#video-codec').val();
         const vb = parseInt($('#video-bitrate').val()) || 0;
 
         if (w > 0) s.video.width = w; else delete s.video.width;
         if (h > 0) s.video.height = h; else delete s.video.height;
+
+        // nothing to sync for datalist; keep input as source of truth
 
         // parse fps: integer or fraction
         if (fpsText.indexOf('/') !== -1) {
@@ -572,7 +619,8 @@ $(function(){
   // create stream: create with one disabled default output without prompts
   $('#btn-new-stream').on('click', async ()=>{
     try{
-      const body = { outputs: [ { type: 'rtmp', url: 'rtmp://', enabled: false } ] };
+      // include default audio.sampleRate = 48000 so new streams have sensible defaults
+      const body = { outputs: [ { type: 'rtmp', url: 'rtmp://', enabled: false } ], audio: { sampleRate: 48000 } };
       const resp = await apiPost('/streams', body);
       if (resp.status === 201) {
         const data = await resp.json();

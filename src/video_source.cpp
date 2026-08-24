@@ -7,6 +7,32 @@ VideoSource::VideoSource(const GstElement* p, const VideoSettings& settings, con
     pipeline_(p),
     settings_(settings),
     preview_(preview) {
+    printf("VideoSource::VideoSource\n");
+}
+
+VideoSource::~VideoSource() {
+    // Stop and remove preview branch if present
+    remove_preview_branch();
+
+    // Tear down video bin
+    if (video_bin_) {
+        // Stop internal threads for elements inside this bin. Do NOT remove/unref
+        // the bin here because ownership is transferred to the pipeline.
+        gst_element_set_state(video_bin_, GST_STATE_NULL);
+        video_bin_ = nullptr; // clear our local pointer; pipeline owns the bin
+    }
+
+    // Tear down tee and dummy sink if present
+    if (video_tee_) {
+        // The tee is shared with other branches (outputs). Do not remove/unref it here.
+        gst_element_set_state(video_tee_, GST_STATE_NULL);
+        video_tee_ = nullptr;
+    }
+    if (fakesink_) {
+        // Dummy sink added to pipeline; do not remove/unref here.
+        gst_element_set_state(fakesink_, GST_STATE_NULL);
+        fakesink_ = nullptr;
+    }
 }
 
 bool link(GstElement* tee, std::vector<GstElement*> sinks) {
@@ -155,6 +181,9 @@ GstElement* VideoSource::create_preview() {
         return nullptr;
     }
 
+
+    printf("add process_jpeg\n");
+
     gst_pad_add_probe(
         jpeg_src,
         GST_PAD_PROBE_TYPE_BUFFER,
@@ -282,6 +311,11 @@ bool VideoSource::create() {
         return false;
     }
 
+    GstElement* videoconvert = gst_element_factory_make("videoconvert", NULL);
+    if (!videoconvert) {
+        return false;
+    }
+
     GstElement* enc = createEncoder(settings_);
     if (!enc) {
         return false;
@@ -292,9 +326,9 @@ bool VideoSource::create() {
         return false;
     }
 
-    gst_bin_add_many(GST_BIN(video_bin_), capture, capture_tee_, enc, parser, NULL);
+    gst_bin_add_many(GST_BIN(video_bin_), capture, capture_tee_, videoconvert, enc, parser, NULL);
 
-    if (!gst_element_link_many(capture, capture_tee_, enc, parser, NULL)) {
+    if (!gst_element_link_many(capture, capture_tee_, videoconvert, enc, parser, NULL)) {
         return false;
     }
 
@@ -326,6 +360,7 @@ bool VideoSource::create() {
 
     // add dummy sink to avoid getting EOS on output issue
     auto fakesink = gst_element_factory_make("fakesink", NULL);
+    fakesink_ = fakesink;
 
     g_object_set(fakesink,
         "sync", FALSE,
@@ -340,7 +375,14 @@ bool VideoSource::create() {
 }
 
 bool VideoSource::update(const VideoSettings& settings) {
-    return settings_ == settings;
+    bool ret = (settings_ == settings);
+    
+
+    if (!ret) {
+        printf("!!!video settings changed!!!\n");
+    }
+
+    return ret;
 }
 
 void VideoSource::syncPreview() {

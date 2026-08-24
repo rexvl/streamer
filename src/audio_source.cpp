@@ -9,6 +9,35 @@ AudioSource::AudioSource(GstElement* p, const AudioSettings& as) :
     pipeline_(p), settings_(as) {
 }
 
+AudioSource::~AudioSource() {
+    // Remove pad probe on our source ghost pad so callbacks won't reference this
+    if (source_ghost_pad_ && source_probe_id_ > 0) {
+        gst_pad_remove_probe(source_ghost_pad_, source_probe_id_);
+        source_probe_id_ = 0;
+    }
+    if (source_ghost_pad_) {
+        gst_object_unref(source_ghost_pad_);
+        source_ghost_pad_ = nullptr;
+    }
+
+    // Do not remove/unref elements that were added to the global pipeline here.
+    // Just set their state to NULL and clear local pointers so pipeline owns final cleanup.
+    if (audio_bin_) {
+        gst_element_set_state(audio_bin_, GST_STATE_NULL);
+        audio_bin_ = nullptr;
+    }
+
+    if (audio_tee_) {
+        gst_element_set_state(audio_tee_, GST_STATE_NULL);
+        audio_tee_ = nullptr;
+    }
+
+    if (fakesink_) {
+        gst_element_set_state(fakesink_, GST_STATE_NULL);
+        fakesink_ = nullptr;
+    }
+}
+
 GstPadProbeReturn AudioSource::buffer_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
     auto self = static_cast<AudioSource*>(user_data);
     if (self) {
@@ -28,6 +57,8 @@ bool AudioSource::create() {
     }
 
     if (!gst_bin_add(GST_BIN(pipeline_), audio_bin_)) {
+        gst_object_unref(audio_bin_);
+        audio_bin_ = nullptr;
         return false;
     }
 
@@ -75,18 +106,19 @@ bool AudioSource::create() {
         return false;
     }
 
-    GstPad* source_ghost = gst_ghost_pad_new("src", source_pad);
-    if (!source_ghost) {
-        return false;
-    }
-
-    if (!gst_element_add_pad(audio_bin_, source_ghost)) {
-        return false;
-    }
-
+    source_ghost_pad_ = gst_ghost_pad_new("src", source_pad);
     gst_object_unref(source_pad);
+    if (!source_ghost_pad_) {
+        return false;
+    }
 
-    gst_pad_add_probe(source_ghost,
+    if (!gst_element_add_pad(audio_bin_, source_ghost_pad_)) {
+        gst_object_unref(source_ghost_pad_);
+        source_ghost_pad_ = nullptr;
+        return false;
+    }
+
+    source_probe_id_ = gst_pad_add_probe(source_ghost_pad_,
         GST_PAD_PROBE_TYPE_BUFFER,
         buffer_probe,
         this,
@@ -102,18 +134,18 @@ bool AudioSource::create() {
     }
 
     // add dummy sink to avoid getting EOS on output issue
-    auto fakesink = gst_element_factory_make("fakesink", NULL);
+    fakesink_ = gst_element_factory_make("fakesink", NULL);
 
-    g_object_set(fakesink,
+    g_object_set(fakesink_,
                  "sync", FALSE,
                  "async", FALSE,
                  nullptr);
 
-    if (!gst_bin_add(GST_BIN(pipeline_), fakesink)) {
+    if (!gst_bin_add(GST_BIN(pipeline_), fakesink_)) {
         return false;
     }
 
-    return gst_element_link_many(audio_bin_, audio_tee_, fakesink, NULL);
+    return gst_element_link_many(audio_bin_, audio_tee_, fakesink_, NULL);
 }
 
 bool AudioSource::update(const AudioSettings& settings) {

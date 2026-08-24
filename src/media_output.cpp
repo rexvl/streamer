@@ -7,6 +7,108 @@ MediaOutput::MediaOutput(GstElement* p, const OutputSettings& s) :
     pipeline_(p), settings_(s) {
 }
 
+MediaOutput::~MediaOutput() {
+    // Ensure any asynchronous restart has finished before we start tearing down
+    if (restart_future_.valid()) {
+        restart_future_.wait();
+    }
+
+    // Remove any blocking probes we added on the source tee pads
+    if (audio_tee_pad_ && audio_probe_id_ > 0) {
+        gst_pad_remove_probe(audio_tee_pad_, audio_probe_id_);
+        audio_probe_id_ = 0;
+    }
+
+    if (video_tee_pad_ && video_probe_id_ > 0) {
+        gst_pad_remove_probe(video_tee_pad_, video_probe_id_);
+        video_probe_id_ = 0;
+    }
+
+    // Release request pads back to their tee elements
+    if (audio_tee_pad_) {
+        // unlink and remove ghost pad from our output_bin_ first
+        if (output_bin_) {
+            GstPad* asink = gst_element_get_static_pad(output_bin_, "asink");
+            if (asink) {
+                gst_pad_unlink(audio_tee_pad_, asink);
+                gst_element_remove_pad(output_bin_, asink);
+                gst_object_unref(asink);
+            }
+        }
+
+        GstElement* tee = GST_PAD_PARENT(audio_tee_pad_);
+        if (GST_IS_ELEMENT(tee)) {
+            gst_element_release_request_pad(tee, audio_tee_pad_);
+        }
+        gst_object_unref(audio_tee_pad_);
+        audio_tee_pad_ = nullptr;
+    }
+
+    if (video_tee_pad_) {
+        // unlink and remove ghost pad from our output_bin_ first
+        if (output_bin_) {
+            GstPad* vsink = gst_element_get_static_pad(output_bin_, "vsink");
+            if (vsink) {
+                gst_pad_unlink(video_tee_pad_, vsink);
+                gst_element_remove_pad(output_bin_, vsink);
+                gst_object_unref(vsink);
+            }
+        }
+
+        GstElement* tee = GST_PAD_PARENT(video_tee_pad_);
+        if (GST_IS_ELEMENT(tee)) {
+            gst_element_release_request_pad(tee, video_tee_pad_);
+        }
+        gst_object_unref(video_tee_pad_);
+        video_tee_pad_ = nullptr;
+    }
+
+    // Ensure branch is shut down. Do not remove/unref output_bin_ here: it is owned by the
+    // pipeline (we added it with gst_bin_add) and pipeline teardown is responsible
+    // for final unref/removal. We only need to remove internal probes and clear
+    // our local references to pads.
+    if (output_bin_) {
+        if (sink_pad_ && sink_probe_id_ > 0) {
+            gst_pad_remove_probe(sink_pad_, sink_probe_id_);
+            sink_probe_id_ = 0;
+        }
+        if (sink_pad_) {
+            gst_object_unref(sink_pad_);
+            sink_pad_ = nullptr;
+        }
+
+        if (vqueue_src_pad_ && vqueue_probe_id_ > 0) {
+            gst_pad_remove_probe(vqueue_src_pad_, vqueue_probe_id_);
+            vqueue_probe_id_ = 0;
+        }
+        if (vqueue_src_pad_) {
+            gst_object_unref(vqueue_src_pad_);
+            vqueue_src_pad_ = nullptr;
+        }
+
+        if (aqueue_src_pad_ && aqueue_probe_id_ > 0) {
+            gst_pad_remove_probe(aqueue_src_pad_, aqueue_probe_id_);
+            aqueue_probe_id_ = 0;
+        }
+        if (aqueue_src_pad_) {
+            gst_object_unref(aqueue_src_pad_);
+            aqueue_src_pad_ = nullptr;
+        }
+
+        // Set bin to NULL so internal threads stop, but leave it added to the pipeline
+        gst_element_set_state(output_bin_, GST_STATE_NULL);
+
+        // Do not call gst_bin_remove or gst_object_unref on output_bin_ here;
+        // the pipeline maintains ownership and will clean it up during pipeline teardown.
+        output_bin_ = nullptr; // clear our local pointer
+    }
+
+    if (mux_) {
+        gst_object_unref(mux_);
+        mux_ = nullptr;
+    }
+}
+
 GstPadProbeReturn MediaOutput::sink_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
     auto self = static_cast<MediaOutput*>(user_data);
 
@@ -53,13 +155,12 @@ bool MediaOutput::create() {
             return false;
         }
 
-        GstPad* pad = gst_element_get_static_pad(sink, "sink");
-        if (!pad) {
+        sink_pad_ = gst_element_get_static_pad(sink, "sink");
+        if (!sink_pad_) {
             return false;
         }
 
-        gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, sink_probe, this, NULL);
-        gst_object_unref(pad);
+        sink_probe_id_ = gst_pad_add_probe(sink_pad_, GST_PAD_PROBE_TYPE_BUFFER, sink_probe, this, NULL);
 
         return true;
     }
@@ -111,13 +212,13 @@ bool MediaOutput::addVideo(GstElement* video_tee) {
         return false;
     }
 
-    GstPad* vqueue_src_pad = gst_element_get_static_pad(vqueue, "src");
-    if (!vqueue_src_pad) {
+    vqueue_src_pad_ = gst_element_get_static_pad(vqueue, "src");
+    if (!vqueue_src_pad_) {
         return false;
     }
 
-    gst_pad_add_probe(
-        vqueue_src_pad,
+    vqueue_probe_id_ = gst_pad_add_probe(
+        vqueue_src_pad_,
         GST_PAD_PROBE_TYPE_BUFFER,
         drop_until_keyframe,
         this,
@@ -129,7 +230,8 @@ bool MediaOutput::addVideo(GstElement* video_tee) {
         return false;
     }
 
-    ret = gst_pad_link(vqueue_src_pad, mux_video_pad);
+    ret = gst_pad_link(vqueue_src_pad_, mux_video_pad);
+    gst_object_unref(mux_video_pad);
     if (ret != GST_PAD_LINK_OK) {
         printf("failed to connect output to video_queue to mux");
         return false;

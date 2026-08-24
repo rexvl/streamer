@@ -17,11 +17,19 @@ struct MediaOutput {
     bool audio_tee_blocked_{ false };
     gulong audio_probe_id_{ 0 };
     gulong video_probe_id_{ 0 };
+    // Pads and probe ids for internal branches so we can remove probes on teardown
+    GstPad* sink_pad_{ nullptr };
+    gulong sink_probe_id_{ 0 };
+    GstPad* vqueue_src_pad_{ nullptr };
+    gulong vqueue_probe_id_{ 0 };
+    GstPad* aqueue_src_pad_{ nullptr };
+    gulong aqueue_probe_id_{ 0 };
     std::future<void> restart_future_;
     uint64_t passed_count_{ 0 };
     bool waiting_for_keyframe_{ true };
 
     MediaOutput(GstElement* p, const OutputSettings& s);
+    ~MediaOutput();
     static GstPadProbeReturn sink_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static GstPadProbeReturn queue_output_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static GstPadProbeReturn drop_until_keyframe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);

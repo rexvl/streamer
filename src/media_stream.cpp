@@ -13,6 +13,7 @@
 MediaStream::MediaStream(const std::shared_ptr<PreviewState>& preview,
                          const std::shared_ptr<StreamStatus>& status) :
     preview_(preview), status_(status) {
+    printf("MediaStream::MediaStream");
 }
 
 GstBusSyncReply MediaStream::bus_sync_handler(GstBus* bus, GstMessage* message, gpointer user_data) {
@@ -35,6 +36,8 @@ GstBusSyncReply MediaStream::bus_sync_handler(GstBus* bus, GstMessage* message, 
 }
 
 bool MediaStream::create(const StreamSettings& settings) {
+    printf("MediaStream::create");
+
     pipeline = gst_pipeline_new(nullptr);
     if (!pipeline) {
         return false;
@@ -292,13 +295,14 @@ bool MediaStream::ProcessMessage(uint64_t mask) {
             &pending);
 
         GstObject* obj = GST_MESSAGE_SRC(msg);
+/*
         g_print("%s (%s): %s -> %s (pending: %s)\n",
             GST_OBJECT_NAME(obj),
             G_OBJECT_TYPE_NAME(obj),
             gst_element_state_get_name(old_state),
             gst_element_state_get_name(new_state),
             gst_element_state_get_name(pending));
-
+*/
         if (obj == GST_OBJECT(pipeline) && GST_STATE_PLAYING == new_state) {
             printf("!!!PLAYING!!!\n");
             playing_ = true;
@@ -397,17 +401,26 @@ bool MediaStream::update(const StreamSettings& settings) {
 }
 
 MediaStream::~MediaStream() {
-    video.reset();
-    audio.reset();
-    outputs.clear();
-
-    if (bus) {
-        gst_object_unref(bus);
-    }
-
+    // Ensure pipeline is stopped before tearing down branches
     if (pipeline) {
         gst_element_set_state(pipeline, GST_STATE_NULL);
         gst_element_get_state(pipeline, NULL, NULL, GST_CLOCK_TIME_NONE);
+    }
+
+    // Release outputs first so they can release requested tee pads and remove their branches
+    outputs.clear();
+
+    // Then release sources (video/audio) which may rely on outputs having already cleaned up
+    video.reset();
+    audio.reset();
+
+    if (bus) {
+        gst_object_unref(bus);
+        bus = nullptr;
+    }
+
+    if (pipeline) {
         gst_object_unref(pipeline);
+        pipeline = nullptr;
     }
 }

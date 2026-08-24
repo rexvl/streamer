@@ -17,6 +17,7 @@ class VideoSource {
     GstElement* capture_tee_{ nullptr };
     GstElement* preview_bin_{ nullptr };
     GstPad* preview_tee_pad_{ nullptr };
+    GstElement* fakesink_{ nullptr };
 
     std::atomic<bool> preview_starting_{false};
     std::atomic<bool> preview_stopping_{ false };
@@ -40,6 +41,7 @@ class VideoSource {
     static GstElement* createEncoder(const VideoSettings& settings);
 public:
     VideoSource(const GstElement* p, const VideoSettings& settings, const std::shared_ptr<PreviewState>& preview);
+    ~VideoSource();
     bool create();
     bool update(const VideoSettings& settings);
 

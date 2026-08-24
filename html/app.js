@@ -22,6 +22,53 @@ $(function(){
     return r.json();
   }
 
+  // Video preview control moved to top-level so previews can be started/stopped
+  // from anywhere (dashboard/showStream etc.). Uses globals: _previewWs, _previewLastUrl, _previewStreamId
+  function startPreview(id) {
+    try {
+      // if already previewing same stream, keep
+      if (_previewWs && String(_previewStreamId) === String(id)) return;
+      stopPreview();
+      const scheme = (location.protocol === 'https:') ? 'wss' : 'ws';
+      const url = `${scheme}://${location.host}/ws-video/${encodeURIComponent(id)}`;
+      const ws = new WebSocket(url, 'ws-video');
+      ws.binaryType = 'arraybuffer';
+      _previewStreamId = id;
+      _previewWs = ws;
+
+      const $img = $('#video-preview-img');
+      const $status = $('#video-preview-status');
+      if ($status.length) $status.text('connecting...');
+
+      ws.onopen = () => { if ($status.length) $status.text('connected'); };
+      ws.onmessage = (ev) => {
+        try {
+          if (typeof ev.data === 'string') {
+            try { const j = JSON.parse(ev.data); console.debug('preview text', j); } catch(e) { console.debug('preview text', ev.data); }
+            return;
+          }
+          const blob = new Blob([ev.data], { type: 'image/jpeg' });
+          const url = URL.createObjectURL(blob);
+          if (_previewLastUrl) URL.revokeObjectURL(_previewLastUrl);
+          _previewLastUrl = url;
+          $img.attr('src', url);
+        } catch (e) { console.debug('preview message error', e); }
+      };
+      ws.onerror = () => { if ($status.length) $status.text('error'); };
+      ws.onclose = (ev) => { if ($status.length) $status.text('disconnected'); if (_previewLastUrl) { $('#video-preview-img').attr('src',''); try { URL.revokeObjectURL(_previewLastUrl); } catch(e){} _previewLastUrl = null; } _previewWs = null; _previewStreamId = null; };
+    } catch (e) { console.debug('startPreview', e); }
+  }
+
+  function stopPreview() {
+    try {
+      if (_previewWs) { try { _previewWs.close(); } catch(e) {} _previewWs = null; }
+      if (_previewLastUrl) { try { URL.revokeObjectURL(_previewLastUrl); } catch(e) {} _previewLastUrl = null; }
+      _previewStreamId = null;
+      $('#video-preview-img').attr('src','');
+      $('#video-preview-status').text('');
+    } catch (e) { console.debug('stopPreview', e); }
+  }
+
   function startAudioPreview(id) {
     try {
       if (_audioWs && String(_audioStreamId) === String(id)) return;
@@ -284,6 +331,9 @@ $(function(){
     if (_previewStreamId && String(_previewStreamId) !== String(id)) {
       stopPreview();
     }
+    if (_audioStreamId && String(_audioStreamId) !== String(id)) {
+      stopAudioPreview();
+    }
     try {
       const s = await apiGet(`/streams/${id}`);
       activeStreamId = id;
@@ -348,58 +398,7 @@ $(function(){
         $('#video-resolution').val('');
       }
 
-  function startPreview(id) {
-    try {
-      // if already previewing same stream, keep
-      if (_previewWs && String(_previewStreamId) === String(id)) return;
-      stopPreview();
-      const scheme = (location.protocol === 'https:') ? 'wss' : 'ws';
-      const url = `${scheme}://${location.host}/ws-video/${encodeURIComponent(id)}`;
-      const ws = new WebSocket(url, 'ws-video');
-      ws.binaryType = 'arraybuffer';
-      _previewStreamId = id;
-      _previewWs = ws;
-
-      const $img = $('#video-preview-img');
-      const $status = $('#video-preview-status');
-      $status.text('connecting...');
-
-      ws.onopen = () => { $status.text('connected'); };
-      ws.onmessage = (ev) => {
-        try {
-          if (typeof ev.data === 'string') {
-            // debug message
-            // try parse
-            try { const j = JSON.parse(ev.data); console.debug('preview text', j); } catch(e) { console.debug('preview text', ev.data); }
-            return;
-          }
-          const blob = new Blob([ev.data], { type: 'image/jpeg' });
-          const url = URL.createObjectURL(blob);
-          if (_previewLastUrl) URL.revokeObjectURL(_previewLastUrl);
-          _previewLastUrl = url;
-          $img.attr('src', url);
-        } catch (e) { console.debug('preview message error', e); }
-      };
-      ws.onerror = () => { $status.text('error'); };
-      ws.onclose = (ev) => { $status.text('disconnected'); if (_previewLastUrl) { $('#video-preview-img').attr('src',''); URL.revokeObjectURL(_previewLastUrl); _previewLastUrl = null; } _previewWs = null; _previewStreamId = null; };
-    } catch (e) { console.debug('startPreview', e); }
-  }
-
-  function stopPreview() {
-    try {
-      if (_previewWs) {
-        try { _previewWs.close(); } catch(e) {}
-        _previewWs = null;
-      }
-      if (_previewLastUrl) {
-        try { URL.revokeObjectURL(_previewLastUrl); } catch(e) {}
-        _previewLastUrl = null;
-      }
-      _previewStreamId = null;
-      $('#video-preview-img').attr('src','');
-      $('#video-preview-status').text('');
-    } catch (e) { console.debug('stopPreview', e); }
-  }
+  // startPreview/stopPreview moved to top-level scope
       // build menu items for combo button (safe to rebuild each render)
       try {
         const $resInput = $('#video-resolution');

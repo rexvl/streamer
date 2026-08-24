@@ -92,6 +92,71 @@ button.danger{background:var(--danger);border-color:rgba(255,107,107,0.2)}
 /* inputs inside cards */
 .card input, .card select{width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:#0b0d0f;color:#e6eef6}
 
+/* For Video and Audio blocks: show field label to the left of the control (inline) */
+#video-settings .form-row.small-compact,
+#audio-settings .form-row.small-compact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#video-settings .form-row.small-compact .form-label,
+#audio-settings .form-row.small-compact .form-label {
+  width: 150px; /* fixed label column */
+  flex: 0 0 150px;
+  margin: 0; /* remove vertical spacing so label sits inline */
+  text-align: left;
+}
+
+#video-settings .form-row.small-compact .form-control,
+#audio-settings .form-row.small-compact .form-control {
+  flex: 1 1 auto; /* allow control to take remaining width */
+}
+
+/* Video/Audio device rows appended dynamically in app.js: place label left of select */
+#sources-list > div,
+#audio-list > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+#sources-list > div > label,
+#audio-list > div > label {
+  width: 150px;
+  flex: 0 0 150px;
+  margin: 0;
+  text-align: left;
+}
+
+#sources-list > div > select,
+#audio-list > div > select {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+/* ensure the resolution combo input/button uses the same remaining-width behavior
+   so the resolution control lines up with other controls */
+#video-settings .form-row.small-compact .combo-wrapper {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+/* Remove focus outlines/white highlight on active controls in video/audio to match audio appearance */
+#video-settings .form-control:focus,
+#audio-settings .form-control:focus,
+#video-settings select:focus,
+#audio-settings select:focus,
+#video-settings button:focus,
+#audio-settings button:focus,
+#sources-list select:focus,
+#audio-list select:focus {
+  outline: none !important;
+  box-shadow: none !important;
+  border-color: var(--border) !important;
+}
+
 /* combo input with dropdown button */
 .combo-wrapper{position:relative;display:flex;align-items:center}
 .combo-wrapper .form-control{flex:1;padding-right:36px}

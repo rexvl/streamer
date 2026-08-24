@@ -8,11 +8,83 @@ $(function(){
   let videoDevices = [];
   let audioDevices = [];
   let activeStreamId = null;
+  let _previewWs = null;
+  let _previewLastUrl = null;
+  let _previewStreamId = null;
+  let _audioWs = null;
+  let _audioLatestLevel = 0.0;
+  let _audioStreamId = null;
+  let _audioRaf = null;
 
   async function apiGet(path) {
     const r = await fetch(path);
     if (!r.ok) throw new Error(`GET ${path} failed: ${r.status}`);
     return r.json();
+  }
+
+  function startAudioPreview(id) {
+    try {
+      if (_audioWs && String(_audioStreamId) === String(id)) return;
+      stopAudioPreview();
+      const scheme = (location.protocol === 'https:') ? 'wss' : 'ws';
+      const url = `${scheme}://${location.host}/ws-audio/${encodeURIComponent(id)}`;
+      const ws = new WebSocket(url, 'ws-audio');
+      _audioWs = ws;
+      _audioStreamId = id;
+      _audioLatestLevel = 0.0;
+
+      const $status = $('#audio-preview-status');
+      const $bar = $('#audio-bar');
+      const $val = $('#audio-value');
+      if ($status.length) $status.text('connecting...');
+
+      ws.onopen = () => { if ($status.length) $status.text('connected'); };
+      ws.onerror = () => { if ($status.length) $status.text('error'); };
+      ws.onclose = (ev) => { if ($status.length) $status.text('disconnected'); _audioWs = null; _audioStreamId = null; };
+
+      ws.onmessage = (ev) => {
+        try {
+          if (typeof ev.data !== 'string') return;
+          const msg = JSON.parse(ev.data);
+          if (!('level' in msg)) return;
+          const lvl = Number(msg.level);
+          if (!Number.isFinite(lvl)) return;
+          _audioLatestLevel = lvl;
+        } catch (e) { console.debug('audio preview msg parse', e); }
+      };
+
+      // render loop
+      function renderAudio() {
+        const level = _audioLatestLevel;
+        // normalize: if 0..1 use directly; if <=0 treat as dB -60..0
+        let normalized = 0;
+        if (level >= 0 && level <= 1) normalized = level;
+        else if (level <= 0) normalized = Math.max(0, Math.min(1, (level + 60) / 60));
+        else normalized = 0;
+
+        if ($bar.length) $bar.css('width', (normalized * 100) + '%');
+        if ($val.length) {
+          if (level >= 0 && level <= 1) $val.text(level.toFixed(3));
+          else if (level <= 0) $val.text(level.toFixed(2) + ' dB');
+          else $val.text('0');
+        }
+        _audioRaf = requestAnimationFrame(renderAudio);
+      }
+      _audioRaf = requestAnimationFrame(renderAudio);
+
+    } catch (e) { console.debug('startAudioPreview', e); }
+  }
+
+  function stopAudioPreview() {
+    try {
+      if (_audioWs) { try { _audioWs.close(); } catch(e) {} _audioWs = null; }
+      if (_audioRaf) { try { cancelAnimationFrame(_audioRaf); } catch(e) {} _audioRaf = null; }
+      _audioStreamId = null;
+      _audioLatestLevel = 0.0;
+      $('#audio-bar').css('width','0%');
+      $('#audio-value').text('0.000');
+      $('#audio-preview-status').text('');
+    } catch (e) { console.debug('stopAudioPreview', e); }
   }
 
   function sourceStatusToClass(s) {
@@ -208,6 +280,10 @@ $(function(){
   }
 
   async function renderStreamView(id){
+    // close any existing preview for a different stream
+    if (_previewStreamId && String(_previewStreamId) !== String(id)) {
+      stopPreview();
+    }
     try {
       const s = await apiGet(`/streams/${id}`);
       activeStreamId = id;
@@ -254,6 +330,12 @@ $(function(){
         await renderStreamView(id);
       });
 
+      // start preview if device selected
+      try {
+        if (s.video && s.video.device) startPreview(id);
+        else stopPreview();
+      } catch (e) { console.debug('startPreview failed', e); }
+
       // populate video resolution input, codec/bitrate controls
       // values from s.video: width,height,fps_n,fps_d,codec,bitrate
       const presets = ['1920x1080','1280x720','854x480','640x360','426x240'];
@@ -265,6 +347,59 @@ $(function(){
       } else {
         $('#video-resolution').val('');
       }
+
+  function startPreview(id) {
+    try {
+      // if already previewing same stream, keep
+      if (_previewWs && String(_previewStreamId) === String(id)) return;
+      stopPreview();
+      const scheme = (location.protocol === 'https:') ? 'wss' : 'ws';
+      const url = `${scheme}://${location.host}/ws-video/${encodeURIComponent(id)}`;
+      const ws = new WebSocket(url, 'ws-video');
+      ws.binaryType = 'arraybuffer';
+      _previewStreamId = id;
+      _previewWs = ws;
+
+      const $img = $('#video-preview-img');
+      const $status = $('#video-preview-status');
+      $status.text('connecting...');
+
+      ws.onopen = () => { $status.text('connected'); };
+      ws.onmessage = (ev) => {
+        try {
+          if (typeof ev.data === 'string') {
+            // debug message
+            // try parse
+            try { const j = JSON.parse(ev.data); console.debug('preview text', j); } catch(e) { console.debug('preview text', ev.data); }
+            return;
+          }
+          const blob = new Blob([ev.data], { type: 'image/jpeg' });
+          const url = URL.createObjectURL(blob);
+          if (_previewLastUrl) URL.revokeObjectURL(_previewLastUrl);
+          _previewLastUrl = url;
+          $img.attr('src', url);
+        } catch (e) { console.debug('preview message error', e); }
+      };
+      ws.onerror = () => { $status.text('error'); };
+      ws.onclose = (ev) => { $status.text('disconnected'); if (_previewLastUrl) { $('#video-preview-img').attr('src',''); URL.revokeObjectURL(_previewLastUrl); _previewLastUrl = null; } _previewWs = null; _previewStreamId = null; };
+    } catch (e) { console.debug('startPreview', e); }
+  }
+
+  function stopPreview() {
+    try {
+      if (_previewWs) {
+        try { _previewWs.close(); } catch(e) {}
+        _previewWs = null;
+      }
+      if (_previewLastUrl) {
+        try { URL.revokeObjectURL(_previewLastUrl); } catch(e) {}
+        _previewLastUrl = null;
+      }
+      _previewStreamId = null;
+      $('#video-preview-img').attr('src','');
+      $('#video-preview-status').text('');
+    } catch (e) { console.debug('stopPreview', e); }
+  }
       // build menu items for combo button (safe to rebuild each render)
       try {
         const $resInput = $('#video-resolution');
@@ -374,6 +509,12 @@ $(function(){
         await refreshAll();
         await renderStreamView(id);
       });
+
+      // start audio preview if device selected
+      try {
+        if (s.audio && s.audio.device) startAudioPreview(id);
+        else stopAudioPreview();
+      } catch (e) { console.debug('startAudioPreview failed', e); }
 
       // populate audio controls
       $('#audio-samplerate').val(s.audio && s.audio.sampleRate ? s.audio.sampleRate : '48000');
@@ -605,7 +746,7 @@ $(function(){
 
   function renderAll(){ renderSidebar(); renderDashboard(); }
 
-  function showDashboard(){ activeStreamId = null; $('.view').addClass('hidden'); $('#dashboard-view').removeClass('hidden'); renderAll(); }
+  function showDashboard(){ activeStreamId = null; $('.view').addClass('hidden'); $('#dashboard-view').removeClass('hidden'); stopPreview(); stopAudioPreview(); renderAll(); }
   function showStream(id){ activeStreamId = id; $('.view').addClass('hidden'); $('#stream-view').removeClass('hidden'); renderStreamView(id); }
   // ensure sidebar reflects active selection when navigating programmatically
   function selectStream(id){

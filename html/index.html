@@ -47,7 +47,10 @@
               <h3><span id="video-dot" class="dot status-stopped"></span>Video</h3>
               <div id="sources-list"></div>
 
-              <div class="video-preview">Preview (16:9)</div>
+              <div class="video-preview">
+                <img id="video-preview-img" class="preview-img" alt="Video preview" />
+                <div id="video-preview-status" class="status-item" style="position:absolute;right:12px;top:12px;font-size:12px;color:var(--muted)"></div>
+              </div>
 
               <div class="form-row small-compact">
                 <label class="form-label">Resolution</label>
@@ -83,6 +86,18 @@
             <div class="card" id="audio-settings">
               <h3><span id="audio-dot" class="dot status-stopped"></span>Audio</h3>
               <div id="audio-list"></div>
+              <div class="form-row small-compact">
+                <div style="width:100%;">
+                  <div class="meter" id="audio-meter">
+                    <div id="audio-bar"></div>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+                    <div id="audio-value" style="font-family:monospace;color:var(--muted)">0.000</div>
+                    <div id="audio-preview-status" class="status-item" style="color:var(--muted)"></div>
+                  </div>
+                </div>
+              </div>
+
 
               <div class="form-row small-compact">
                 <label class="form-label">Sample rate</label>

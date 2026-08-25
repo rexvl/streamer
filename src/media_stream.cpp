@@ -61,7 +61,7 @@ bool MediaStream::create(const StreamSettings& settings) {
         }
     }
 
-    if (!syncOutputs(settings.outputs)) {
+    if (!syncOutputs(settings.outputs, false)) {
         return false;
     }
 
@@ -126,7 +126,7 @@ bool MediaStream::addAudio(const AudioSettings& settings) {
     return true;
 }
 
-bool MediaStream::addOutput(const std::string& id, const OutputSettings& settings) {
+bool MediaStream::addOutput(const std::string& id, const OutputSettings& settings, bool sync_state) {
     auto output = std::make_unique<MediaOutput>(pipeline, settings);
     if (!output->create()) {
         return false;
@@ -140,6 +140,12 @@ bool MediaStream::addOutput(const std::string& id, const OutputSettings& setting
 
     if (audio) {
         if (!output->addAudio(audio->get_tee())) {
+            return false;
+        }
+    }
+
+    if (sync_state) {
+        if (!output->syncState()) {
             return false;
         }
     }
@@ -160,7 +166,7 @@ bool MediaStream::removeAudio() {
     return false;
 }
 
-bool MediaStream::syncOutputs(std::map<std::string, OutputSettings> settings) {
+bool MediaStream::syncOutputs(std::map<std::string, OutputSettings> settings, bool sync_state) {
     if (!video && !audio) {
         return false;
     }
@@ -183,7 +189,7 @@ bool MediaStream::syncOutputs(std::map<std::string, OutputSettings> settings) {
     }
 
     for (const auto& settings_it : settings) {
-        if (!addOutput(settings_it.first, settings_it.second)) {
+        if (!addOutput(settings_it.first, settings_it.second, sync_state)) {
             return false;
         }
     }
@@ -385,7 +391,7 @@ bool MediaStream::update(const StreamSettings& settings) {
         }
     }
 
-    return syncOutputs(settings.outputs);
+    return syncOutputs(settings.outputs, true);
 }
 
 MediaStream::~MediaStream() {

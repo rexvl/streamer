@@ -316,6 +316,10 @@ bool MediaOutput::addAudio(GstElement* audio_tee) {
     return true;
 }
 
+bool MediaOutput::syncState() {
+    return gst_element_sync_state_with_parent(output_bin_);
+}
+
 GstPadProbeReturn MediaOutput::tee_pad_block(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
     auto self = static_cast<MediaOutput*>(user_data);
 

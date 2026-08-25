@@ -54,6 +54,7 @@ public:
 
     bool addVideo(GstElement* video_tee);
     bool addAudio(GstElement* audio_tee);
+    bool syncState();
 
     bool blockTeePads();
 

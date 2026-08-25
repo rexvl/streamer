@@ -35,11 +35,11 @@ struct MediaStream {
     bool addVideo(const VideoSettings& settings);
     bool addAudio(const AudioSettings& settings);
     //bool IsSourcesEmpty();
-    bool addOutput(const std::string& id, const OutputSettings& settings);
+    bool addOutput(const std::string& id, const OutputSettings& settings, bool sync_state);
     bool IsOutputsEmpty();
     bool removeVideo();
     bool removeAudio();
-    bool syncOutputs(std::map<std::string, OutputSettings> settings);
+    bool syncOutputs(std::map<std::string, OutputSettings> settings, bool sync_state);
     bool onError(GstElement* src);
     bool ProcessMessage(uint64_t mask = GST_MESSAGE_INFO | GST_MESSAGE_ERROR | GST_MESSAGE_EOS | GST_MESSAGE_STATE_CHANGED | GST_MESSAGE_ELEMENT);
     bool ProcessError();

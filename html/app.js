@@ -614,18 +614,11 @@ $(function(){
         $block.append($header);
 
         const $fields = $('<div/>').addClass('output-fields');
-        const $type = $('<select/>').addClass('form-control').css('max-width','140px');
-        $type.append($('<option/>').attr('value','rtmp').text('RTMP'));
-        $type.append($('<option/>').attr('value','rtsp').text('RTSP'));
-        $type.val(o.type || 'rtmp');
+        // render URL in the same inline label/control style used by Video/Audio
+        const $urlRow = $('<div/>').addClass('form-row small-compact');
+        const $urlLabel = $('<label/>').addClass('form-label').text('URL');
         const $url = $('<input/>').addClass('form-control').attr('type','text').val(o.url || '');
-
-        $type.on('change', async ()=>{
-          o.type = $type.val();
-          const payload = buildStreamPayload(s);
-          await apiPut(`/streams/${id}`, payload);
-          await refreshAll();
-        });
+        $urlRow.append($urlLabel).append($url);
 
         let saveTimeout = null;
         $url.on('input', ()=>{
@@ -651,7 +644,7 @@ $(function(){
           });
         }
 
-        $fields.append($type).append($url);
+        $fields.append($urlRow);
         if ($remove) $fields.append($remove);
         $block.append($fields);
         $outs.append($block);
@@ -667,7 +660,7 @@ $(function(){
         // remember current count so we can detect server-side changes
         const prevCount = s.outputs.length;
         // default new output: create disabled so it doesn't start immediately
-        s.outputs.push({ type: 'rtmp', url: 'rtmp://', enabled: false });
+        s.outputs.push({ url: 'rtmp://', enabled: false });
         const payload = buildStreamPayload(s);
         await apiPut(`/streams/${id}`, payload);
         await refreshAll();
@@ -739,7 +732,7 @@ $(function(){
     const payload = {};
     if (s.video) payload.video = s.video;
     if (s.audio) payload.audio = s.audio;
-    if (s.outputs) payload.outputs = s.outputs.map(o => ({ type: o.type, url: o.url, enabled: !!o.enabled }));
+    if (s.outputs) payload.outputs = s.outputs.map(o => ({ url: o.url, enabled: !!o.enabled }));
     return payload;
   }
 
@@ -760,7 +753,7 @@ $(function(){
   $('#btn-new-stream').on('click', async ()=>{
     try{
       // include default audio.sampleRate = 48000 so new streams have sensible defaults
-      const body = { outputs: [ { type: 'rtmp', url: 'rtmp://', enabled: false } ], audio: { sampleRate: 48000 } };
+      const body = { outputs: [ { url: 'rtmp://', enabled: false } ], audio: { sampleRate: 48000 } };
       const resp = await apiPost('/streams', body);
       if (resp.status === 201) {
         const data = await resp.json();

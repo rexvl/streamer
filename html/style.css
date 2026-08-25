@@ -143,6 +143,22 @@ button.danger{background:var(--danger);border-color:rgba(255,107,107,0.2)}
   width: auto;
 }
 
+/* Outputs: use same inline label/control layout as Video/Audio */
+.output-block .form-row.small-compact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.output-block .form-row.small-compact .form-label {
+  width: auto; /* label width adapts to text so input starts immediately after label */
+  flex: 0 0 auto;
+  margin: 0 8px 0 0; /* small gap between label and input */
+  text-align: left;
+}
+.output-block .form-row.small-compact .form-control {
+  flex: 1 1 auto;
+}
+
 /* Remove focus outlines/white highlight on active controls in video/audio to match audio appearance */
 #video-settings .form-control:focus,
 #audio-settings .form-control:focus,

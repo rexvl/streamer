@@ -686,11 +686,11 @@ $(function(){
         }
       });
 
-      // disable add button if already 5 outputs
+      // hide add button if already 5 outputs
       if (s.outputs.length >= 5) {
-        $('#btn-add-output').prop('disabled', true).attr('title','Maximum 5 outputs');
+        $('#btn-add-output').hide();
       } else {
-        $('#btn-add-output').prop('disabled', false).removeAttr('title');
+        $('#btn-add-output').show();
       }
 
       $('#btn-start').off('click').on('click', async ()=>{

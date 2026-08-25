@@ -52,21 +52,7 @@ void from_json(const nlohmann::json& j, AudioSettings& c) {
 }
 
 inline
-void from_json(const nlohmann::json& j, OutputSettings::Type& type) {
-    std::string s = j.get<std::string>();
-
-    if (s == "rtmp")
-        type = OutputSettings::Type::RTMP;
-    else if (s == "rtsp")
-        type = OutputSettings::Type::RTSP;
-    else
-        throw std::runtime_error("Unknown output type: " + s);
-}
-
-inline
 void from_json(const nlohmann::json& j, OutputSettings& c) {
-    j.at("type").get_to(c.type);
-
     if (j.contains("enabled")) {
         j.at("enabled").get_to(c.enabled);
     }
@@ -182,19 +168,8 @@ void to_json(nlohmann::json& j, const AudioSettings& s) {
 }
 
 inline
-void to_json(nlohmann::json& j, const OutputSettings::Type& t) {
-    if (t == OutputSettings::Type::RTMP)
-        j = "rtmp";
-    else if (t == OutputSettings::Type::RTSP)
-        j = "rtsp";
-    else
-        throw std::runtime_error("Unknown output type");
-}
-
-inline
 void to_json(nlohmann::json& j, const OutputSettings& s) {
     j = nlohmann::json{
-        {"type", s.type},
         {"url", s.url},
         {"enabled", s.enabled}
     };

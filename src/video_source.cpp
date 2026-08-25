@@ -282,6 +282,58 @@ GstElement* VideoSource::createEncoder(const VideoSettings& settings) {
     return enc;
 }
 
+GstPadProbeReturn VideoSource::capture_src_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
+    //auto self = static_cast<VideoSource*>(user_data);
+
+    GstEvent* event = GST_PAD_PROBE_INFO_EVENT(info);
+    if (!event) {
+        return GST_PAD_PROBE_OK;
+    }
+
+    if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS) {
+        GstCaps* caps = NULL;
+
+        gst_event_parse_caps(event, &caps);
+
+        if (caps) {
+            gchar* caps_str = gst_caps_to_string(caps);
+
+            g_print("[%s] CAPS: %s\n",
+                GST_PAD_NAME(pad),
+                caps_str);
+
+            g_free(caps_str);
+        }
+    }
+
+    return GST_PAD_PROBE_OK;
+}
+
+GstPadProbeReturn VideoSource::encoder_sink_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
+    GstEvent* event = GST_PAD_PROBE_INFO_EVENT(info);
+    if (!event) {
+        return GST_PAD_PROBE_OK;
+    }
+
+    if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS) {
+        GstCaps* caps = NULL;
+
+        gst_event_parse_caps(event, &caps);
+
+        if (caps) {
+            gchar* caps_str = gst_caps_to_string(caps);
+
+            g_print("[%s] CAPS: %s\n",
+                GST_PAD_NAME(pad),
+                caps_str);
+
+            g_free(caps_str);
+        }
+    }
+
+    return GST_PAD_PROBE_OK;
+}
+
 bool VideoSource::create() {
     if (!settings_.device) {
         return false;
@@ -311,10 +363,45 @@ bool VideoSource::create() {
         return false;
     }
 
+    GstElement* videorate = gst_element_factory_make("videorate", NULL);
+    if (!videorate) {
+        return false;
+    }
+
+    GstElement* videoscale = gst_element_factory_make("videoscale", NULL);
+    if (!videoscale) {
+        return false;
+    }
+
+    g_object_set(
+        videoscale,
+        "add-borders", TRUE,
+        nullptr
+    );
+
     GstElement* videoconvert = gst_element_factory_make("videoconvert", NULL);
     if (!videoconvert) {
         return false;
     }
+
+    GstElement* capsfilter = gst_element_factory_make("capsfilter", NULL);
+    if (!capsfilter) {
+        return false;
+    }
+
+    GstCaps* caps = gst_caps_new_simple(
+        "video/x-raw",
+        "width", G_TYPE_INT, settings_.width,
+        "height", G_TYPE_INT, settings_.height,
+        "framerate", GST_TYPE_FRACTION, settings_.fps_n, settings_.fps_d,
+        nullptr
+    );
+
+    if (!caps) {
+        return false;
+    }
+
+    g_object_set(capsfilter, "caps", caps, nullptr);
 
     GstElement* enc = createEncoder(settings_);
     if (!enc) {
@@ -326,10 +413,22 @@ bool VideoSource::create() {
         return false;
     }
 
-    gst_bin_add_many(GST_BIN(video_bin_), capture, capture_tee_, videoconvert, enc, parser, NULL);
+    gst_bin_add_many(GST_BIN(video_bin_), capture, capture_tee_, videorate, videoscale, videoconvert, capsfilter, enc, parser, NULL);
 
-    if (!gst_element_link_many(capture, capture_tee_, videoconvert, enc, parser, NULL)) {
+    if (!gst_element_link_many(capture, capture_tee_, videorate, videoscale, videoconvert, capsfilter, enc, parser, NULL)) {
         return false;
+    }
+
+    GstPad* capture_src_pad = gst_element_get_static_pad(capture, "src");
+    if (capture_src_pad) {
+        gst_pad_add_probe(capture_src_pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, capture_src_probe, this, NULL);
+        gst_object_unref(capture_src_pad);
+    }
+
+    GstPad* encoder_sink_pad = gst_element_get_static_pad(enc, "sink");
+    if (encoder_sink_pad) {
+        gst_pad_add_probe(encoder_sink_pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, encoder_sink_probe, this, NULL);
+        gst_object_unref(encoder_sink_pad);
     }
 
     GstPad* source_pad = gst_element_get_static_pad(parser, "src");
@@ -376,7 +475,6 @@ bool VideoSource::create() {
 
 bool VideoSource::update(const VideoSettings& settings) {
     bool ret = (settings_ == settings);
-    
 
     if (!ret) {
         printf("!!!video settings changed!!!\n");
@@ -544,8 +642,11 @@ bool VideoSource::operator==(GstElement* other) const {
     return video_bin_ == other;
 }
 
-uint32_t VideoSource::consumeFrameCount() {
-    return frame_count_.exchange(0, std::memory_order_relaxed);
+void VideoSource::updateStats(std::shared_ptr<StreamStatus>& stats) {
+    auto frame_count = frame_count_.exchange(0, std::memory_order_relaxed);
+    if (frame_count > 10) {
+        stats->setVideoStatus(SourceStatus::kSuccess);
+    }
 }
 
 GstElement* VideoSource::get_tee() {

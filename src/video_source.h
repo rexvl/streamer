@@ -29,6 +29,8 @@ class VideoSource {
     static GstPadProbeReturn process_jpeg(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static GstPadProbeReturn start_preview_idle(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static GstPadProbeReturn stop_preview_idle(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
+    static GstPadProbeReturn capture_src_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
+    static GstPadProbeReturn encoder_sink_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
 
     bool add_preview_branch();
     void remove_preview_branch();
@@ -48,6 +50,6 @@ public:
     void syncPreview();
     bool operator==(GstElement* other) const;
 
-    uint32_t consumeFrameCount();
+    void updateStats(std::shared_ptr<StreamStatus>& stats);
     GstElement* get_tee();
 };

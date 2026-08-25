@@ -22,10 +22,9 @@ GstBusSyncReply MediaStream::bus_sync_handler(GstBus* bus, GstMessage* message, 
     if (GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR) {
         GstObject* src = GST_MESSAGE_SRC(message);
 
-        for (auto& it : self->outputs) {
-            auto& output = it.second;
+        for (auto& [_, output] : self->outputs) {
              // Check if the failed element belongs to our output_bin
-            if (gst_object_has_as_ancestor(src, GST_OBJECT(output->output_bin_))) {
+            if (gst_object_has_as_ancestor(src, GST_OBJECT(output->getElement()))) {
                 printf("[SYNC] Network error! Immediate hardware block.\n");
                 output->blockTeePads();
                 break;
@@ -87,28 +86,17 @@ void MediaStream::syncPreview() {
 
 void MediaStream::updateStatus() {
     if (video) {
-        uint32_t frame_count = video->consumeFrameCount();
-        if (frame_count > 10) {
-            status_->setVideoStatus(SourceStatus::kSuccess);
-        }
+        video->updateStats(status_);
     }
 
     if (audio) {
-        uint32_t frame_count = audio->consumeFrameCount();
-        if (frame_count > 10) {
-            status_->setAudioStatus(SourceStatus::kSuccess);
-        }
+        audio->updateStats(status_);
     }
 
-    for (auto& outputs_it : outputs) {
-        auto& output = outputs_it.second;
-        uint32_t packet_count = output->packet_count_.exchange(0, std::memory_order_relaxed);
-        if (packet_count > 10) {
-            status_->setOutputStatus(outputs_it.first, OutputStatus::kSuccess);
-        }
+    for (auto& [id, output] : outputs) {
+        output->updateStats(status_);
     }
 }
-
 
 bool MediaStream::addVideo(const VideoSettings& settings) {
     if (video || !outputs.empty() || !settings.device) {
@@ -218,7 +206,7 @@ bool MediaStream::onError(GstElement* src) {
 
     for (auto& it : outputs) {
         auto& output = it.second;
-        if (output->output_bin_ == src) {
+        if (output->getElement() == src) {
             printf("output:%s failed\n", it.first.c_str());
             status_->setOutputStatus(it.first, OutputStatus::kFail);
             return true;
@@ -261,9 +249,9 @@ bool MediaStream::ProcessMessage(uint64_t mask) {
 
         gst_message_parse_error(msg, &err, &debug);
 
-        g_printerr("Error from %s: %s\n",
+        g_printerr("Error from %s: err:'%s' debug:'%s'\n",
             GST_OBJECT_NAME(GST_MESSAGE_SRC(msg)),
-            err->message);
+            err->message, debug);
 
         g_error_free(err);
         g_free(debug);

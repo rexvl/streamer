@@ -1,13 +1,17 @@
 ﻿#include "media_output.h"
 
 #include <gst/gst.h>
+#include <gst/base/gstbasesink.h>
 #include <cstdio>
 
 MediaOutput::MediaOutput(GstElement* p, const OutputSettings& s) :
     pipeline_(p), settings_(s) {
+    printf("MediaOutput::MediaOutput: id=%s\n", settings_.id.c_str());
 }
 
 MediaOutput::~MediaOutput() {
+    printf("MediaOutput::~MediaOutput: id=%s\n", settings_.id.c_str());
+
     // Ensure any asynchronous restart has finished before we start tearing down
     if (restart_future_.valid()) {
         restart_future_.wait();
@@ -81,6 +85,7 @@ MediaOutput::~MediaOutput() {
             gst_pad_remove_probe(vqueue_src_pad_, vqueue_probe_id_);
             vqueue_probe_id_ = 0;
         }
+
         if (vqueue_src_pad_) {
             gst_object_unref(vqueue_src_pad_);
             vqueue_src_pad_ = nullptr;
@@ -90,6 +95,7 @@ MediaOutput::~MediaOutput() {
             gst_pad_remove_probe(aqueue_src_pad_, aqueue_probe_id_);
             aqueue_probe_id_ = 0;
         }
+
         if (aqueue_src_pad_) {
             gst_object_unref(aqueue_src_pad_);
             aqueue_src_pad_ = nullptr;
@@ -102,18 +108,15 @@ MediaOutput::~MediaOutput() {
         // the pipeline maintains ownership and will clean it up during pipeline teardown.
         output_bin_ = nullptr; // clear our local pointer
     }
-
-    if (mux_) {
-        gst_object_unref(mux_);
-        mux_ = nullptr;
-    }
 }
 
 GstPadProbeReturn MediaOutput::sink_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
     auto self = static_cast<MediaOutput*>(user_data);
 
-    if (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) {
-        self->packet_count_++;
+    auto* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+    if (buffer) {
+        self->bytes_count_.fetch_add(gst_buffer_get_size(buffer), std::memory_order_relaxed);
+        self->packet_count_.fetch_add(1, std::memory_order_relaxed);
     }
 
     return GST_PAD_PROBE_OK;
@@ -129,7 +132,8 @@ bool MediaOutput::create() {
         return false;
     }
 
-    if (settings_.type == OutputSettings::Type::RTMP) {
+    std::string rtmp_prefix = "rtmp://";
+    if (!settings_.url.compare(0, rtmp_prefix.size(), rtmp_prefix)) {
         mux_ = gst_element_factory_make("flvmux", NULL);
         if (!mux_) {
             return false;
@@ -139,23 +143,23 @@ bool MediaOutput::create() {
             "streamable", TRUE,
             NULL);
 
-        auto sink = gst_element_factory_make("rtmpsink", NULL);
-        if (!sink) {
+        sink_ = gst_element_factory_make("rtmpsink", NULL);
+        if (!sink_) {
             return false;
         }
 
-        g_object_set(sink,
+        g_object_set(sink_,
             "location", settings_.url.c_str(),
             "async", FALSE,  // Important: do not block pipeline state changes
             "sync", FALSE,   // Prevents the sink from depending on the old pipeline clock
             NULL);
 
-        gst_bin_add_many(GST_BIN(output_bin_), mux_, sink, NULL);
-        if (!gst_element_link(mux_, sink)) {
+        gst_bin_add_many(GST_BIN(output_bin_), mux_, sink_, NULL);
+        if (!gst_element_link(mux_, sink_)) {
             return false;
         }
 
-        sink_pad_ = gst_element_get_static_pad(sink, "sink");
+        sink_pad_ = gst_element_get_static_pad(sink_, "sink");
         if (!sink_pad_) {
             return false;
         }
@@ -168,22 +172,34 @@ bool MediaOutput::create() {
     return false;
 }
 
+void MediaOutput::on_vqueue_overrun(GstElement* queue, gpointer user_data) {
+    auto* self = static_cast<MediaOutput*>(user_data);
+    self->vqueue_dropped_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void MediaOutput::on_aqueue_overrun(GstElement* queue, gpointer user_data) {
+    auto* self = static_cast<MediaOutput*>(user_data);
+    self->aqueue_dropped_.fetch_add(1, std::memory_order_relaxed);
+}
+
 bool MediaOutput::addVideo(GstElement* video_tee) {
-    GstElement* vqueue = gst_element_factory_make("queue", NULL);
-    if (!vqueue) {
+    vqueue_ = gst_element_factory_make("queue", NULL);
+    if (!vqueue_) {
         return false;
     }
 
-    g_object_set(vqueue,
+    g_object_set(vqueue_,
+        "leaky", 2,
         "max-size-buffers", 0,
         "max-size-bytes", 0,
-        "max-size-time", 2000 * GST_MSECOND,
-        "leaky", 0,
+        "max-size-time", 2 * GST_SECOND,
         NULL);
 
-    if (!gst_bin_add(GST_BIN(output_bin_), vqueue)) {
+    if (!gst_bin_add(GST_BIN(output_bin_), vqueue_)) {
         return false;
     }
+
+    g_signal_connect(vqueue_, "overrun", G_CALLBACK(on_vqueue_overrun), this);
 
     if (!video_tee_pad_) {
         video_tee_pad_ = gst_element_request_pad_simple(video_tee, "src_%u");
@@ -192,7 +208,7 @@ bool MediaOutput::addVideo(GstElement* video_tee) {
         }
     }
 
-    GstPad* vqueue_sink_pad = gst_element_get_static_pad(vqueue, "sink");
+    GstPad* vqueue_sink_pad = gst_element_get_static_pad(vqueue_, "sink");
     if (!vqueue_sink_pad) {
         return false;
     }
@@ -212,7 +228,7 @@ bool MediaOutput::addVideo(GstElement* video_tee) {
         return false;
     }
 
-    vqueue_src_pad_ = gst_element_get_static_pad(vqueue, "src");
+    vqueue_src_pad_ = gst_element_get_static_pad(vqueue_, "src");
     if (!vqueue_src_pad_) {
         return false;
     }
@@ -246,18 +262,19 @@ bool MediaOutput::addAudio(GstElement* audio_tee) {
         return false;
     }
 
-    // Set stable, valid GstQueue properties
-    g_object_set(
-        aqueue,
-        "leaky", 2, // GST_QUEUE_LEAK_DOWNSTREAM
-        "max-size-buffers", 1,
-        nullptr
-    );
+    g_object_set(aqueue,
+        "leaky", 2,
+        "max-size-buffers", 0,
+        "max-size-bytes", 0,
+        "max-size-time", 2 * GST_SECOND,
+        NULL);
 
     // Queue is returned inside output_bin_ to ensure the entire branch resets cleanly together
     if (!gst_bin_add(GST_BIN(output_bin_), aqueue)) {
         return false;
     }
+
+    g_signal_connect(aqueue, "overrun", G_CALLBACK(on_aqueue_overrun), this);
 
     if (!audio_tee_pad_) {
         audio_tee_pad_ = gst_element_request_pad_simple(audio_tee, "src_%u");
@@ -409,4 +426,42 @@ GstPadProbeReturn MediaOutput::drop_until_keyframe(GstPad* pad, GstPadProbeInfo*
     self->waiting_for_keyframe_ = false;
 
     return GST_PAD_PROBE_OK;
+}
+
+void MediaOutput::updateStats(std::shared_ptr<StreamStatus>& stats) {
+    uint32_t packet_count = packet_count_.exchange(0, std::memory_order_relaxed);
+    if (packet_count > 10) {
+        stats->setOutputStatus(settings_.id, OutputStatus::kSuccess);
+    }
+
+    auto cur_time = std::chrono::steady_clock::now();
+    if (last_stats_time_ == std::chrono::steady_clock::time_point()) {
+        last_stats_time_ = cur_time;
+        return;
+    }
+
+    const uint64_t duration = std::chrono::duration_cast<std::chrono::milliseconds>(cur_time - last_stats_time_).count();
+    last_stats_time_ = cur_time;
+
+    const uint32_t bytes_count = bytes_count_.exchange(0, std::memory_order_relaxed);
+
+    const uint64_t bitrate = 8 * bytes_count / duration;
+
+    printf("bitrate=%lld\n", bitrate); 
+
+    auto vqueue_dropped = vqueue_dropped_.load();
+    if (vqueue_dropped > last_vqueue_dropped_) {
+        printf("!!!vqueue droped %lld!!!\n", vqueue_dropped);
+        last_vqueue_dropped_ = vqueue_dropped;
+    }
+
+    auto aqueue_dropped = aqueue_dropped_.load();
+    if (aqueue_dropped > last_aqueue_dropped_) {
+        printf("!!!aqueue droped %lld!!!\n", aqueue_dropped);
+        last_aqueue_dropped_ = aqueue_dropped;
+    }
+}
+
+GstElement* MediaOutput::getElement() const {
+    return output_bin_;
 }

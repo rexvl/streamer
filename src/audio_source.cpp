@@ -15,10 +15,6 @@ AudioSource::~AudioSource() {
         gst_pad_remove_probe(source_ghost_pad_, source_probe_id_);
         source_probe_id_ = 0;
     }
-    if (source_ghost_pad_) {
-        gst_object_unref(source_ghost_pad_);
-        source_ghost_pad_ = nullptr;
-    }
 
     // Do not remove/unref elements that were added to the global pipeline here.
     // Just set their state to NULL and clear local pointers so pipeline owns final cleanup.
@@ -43,6 +39,33 @@ GstPadProbeReturn AudioSource::buffer_probe(GstPad* pad, GstPadProbeInfo* info, 
     if (self) {
         self->frame_count_.fetch_add(1, std::memory_order_relaxed);
     }
+    return GST_PAD_PROBE_OK;
+}
+
+GstPadProbeReturn AudioSource::capture_pad_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
+    //auto self = static_cast<VideoSource*>(user_data);
+
+    GstEvent* event = GST_PAD_PROBE_INFO_EVENT(info);
+    if (!event) {
+        return GST_PAD_PROBE_OK;
+    }
+
+    if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS) {
+        GstCaps* caps = NULL;
+
+        gst_event_parse_caps(event, &caps);
+
+        if (caps) {
+            gchar* caps_str = gst_caps_to_string(caps);
+
+            g_print("[%s] CAPS: %s\n",
+                GST_PAD_NAME(pad),
+                caps_str);
+
+            g_free(caps_str);
+        }
+    }
+
     return GST_PAD_PROBE_OK;
 }
 
@@ -72,6 +95,29 @@ bool AudioSource::create() {
         return false;
     }
 
+    GstElement* audioresample = gst_element_factory_make("audioresample", NULL);
+    if (!audioresample) {
+        return false;
+    }
+
+    GstElement* capsfilter = gst_element_factory_make("capsfilter", NULL);
+    if (!capsfilter) {
+        return false;
+    }
+
+    GstCaps* caps = gst_caps_new_simple(
+        "audio/x-raw",
+        "rate", G_TYPE_INT, settings_.sampleRate,
+        "channels", G_TYPE_INT, settings_.channel_count,
+        nullptr
+    );
+
+    if (!caps) {
+        return false;
+    }
+
+    g_object_set(capsfilter, "caps", caps, nullptr);
+
     GstElement* level = gst_element_factory_make("level", NULL);
     if (!level) {
         return false;
@@ -96,10 +142,17 @@ bool AudioSource::create() {
         return false;
     }
 
-    gst_bin_add_many(GST_BIN(audio_bin_), capture, audioconvert, level, enc, parser, NULL);
-    if (!gst_element_link_many(capture, audioconvert, level, enc, parser, NULL)) {
+    gst_bin_add_many(GST_BIN(audio_bin_), capture, audioresample, audioconvert, capsfilter, level, enc, parser, NULL);
+    if (!gst_element_link_many(capture, audioresample, audioconvert, capsfilter, level, enc, parser, NULL)) {
         return false;
     }
+
+    GstPad* capture_pad = gst_element_get_static_pad(capture, "src");
+    if (!capture_pad) {
+        return false;
+    }
+
+    gst_pad_add_probe(capture_pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, capture_pad_probe, this, NULL);
 
     GstPad* source_pad = gst_element_get_static_pad(parser, "src");
     if (!source_pad) {
@@ -152,8 +205,11 @@ bool AudioSource::update(const AudioSettings& settings) {
     return settings_ == settings;
 }
 
-uint32_t AudioSource::consumeFrameCount() {
-    return frame_count_.exchange(0, std::memory_order_relaxed);
+void AudioSource::updateStats(std::shared_ptr<StreamStatus>& stats) {
+    uint32_t frame_count = frame_count_.exchange(0, std::memory_order_relaxed);
+    if (frame_count > 0) {
+        stats->setAudioStatus(SourceStatus::kSuccess);
+    }
 }
 
 GstElement* AudioSource::get_tee() {

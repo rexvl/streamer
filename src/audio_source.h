@@ -16,12 +16,13 @@ class AudioSource {
     gulong source_probe_id_{ 0 };
 
     static GstPadProbeReturn buffer_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
+    static GstPadProbeReturn capture_pad_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
 public:
     AudioSource(GstElement* p, const AudioSettings& settings);
     ~AudioSource();
     bool create();
     bool update(const AudioSettings& settings);
-    uint32_t consumeFrameCount();
+    void updateStats(std::shared_ptr<StreamStatus>& stats);
     GstElement* get_tee();
     bool operator==(const GstElement* other) const;
 };

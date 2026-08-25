@@ -74,8 +74,6 @@ enum class OutputStatus {
 struct OutputSettings {
     std::string id;
     bool enabled{ true };
-    enum class Type { RTSP, RTMP };
-    Type type;
     std::string url;
 };
 
@@ -86,8 +84,7 @@ struct StreamSettings {
     std::map<std::string, OutputSettings> outputs;
 
     bool isEnabled() const {
-        for (const auto& it : outputs) {
-            auto& output = it.second;
+        for (const auto& [_, output] : outputs) {
             if (output.enabled) {
                 return true;
             }

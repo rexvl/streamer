@@ -175,13 +175,13 @@ bool MediaStream::syncOutputs(std::map<std::string, OutputSettings> settings, bo
     while (outputs_it != outputs.end()) {
         auto settings_it = settings.find(outputs_it->first);
         if (settings.end() == settings_it) {
-            // remove output
-            return false;
+            outputs_it = outputs.erase(outputs_it);
+            continue;
         }
 
         if (!settings_it->second.enabled) {
-            // remove output
-            return false;
+            outputs_it = outputs.erase(outputs_it);
+            continue;
         }
 
         settings.erase(settings_it);

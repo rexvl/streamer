@@ -101,7 +101,11 @@ bool ConfigManager::getStream(StreamSettings& stream, const std::string& id) {
     return false;
 }
 
-std::string ConfigManager::addStream(StreamSettings& settings) {
+bool ConfigManager::addStream(StreamSettings& settings) {
+    if (!settings.video && !settings.audio) {
+        return false;
+    }
+
     StreamContext context(settings, preview_listener_);
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
@@ -110,7 +114,7 @@ std::string ConfigManager::addStream(StreamSettings& settings) {
     addStreamIndex(context);
 
     streams_[settings.id] = context;
-    return settings.id;
+    return true;
 }
 
 bool ConfigManager::updateStream(const StreamSettings& settings) {

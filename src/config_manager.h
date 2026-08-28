@@ -21,15 +21,15 @@ struct VideoSettings {
     std::string device_id;
     GstDevice* device{ nullptr };
 
-    int width{ 0 };
-    int height{ 0 };
-    int fps_n{ 0 };
+    int width{ 1920 };
+    int height{ 1080 };
+    int fps_n{ 30 };
     int fps_d{ 1 };
 
     enum class Codec { x264enc, nvautogpuh264enc, qsvh264enc };
-    Codec codec;
+    Codec codec{ Codec::x264enc };
 
-    int bitrate{ 0 }; // kbps
+    int bitrate{ 1000 }; // kbps
 
     bool operator==(const VideoSettings & other) {
         return device_id == other.device_id &&
@@ -47,13 +47,13 @@ struct AudioSettings {
     std::string device_id;
     GstDevice* device{ nullptr };
 
-    int sampleRate{ 0 };
-    int channel_count{ 0 };
+    int sampleRate{ 48000 };
+    int channel_count{ 2 };
 
     enum class Codec { AAC };
-    Codec codec;
+    Codec codec { Codec::AAC };
 
-    int bitrate{ 0 };
+    int bitrate{ 128 };
 
     bool operator==(const AudioSettings& other) {
         return device_id == other.device_id &&
@@ -196,7 +196,7 @@ public:
     void load();
     void getStreams(std::map<std::string, StreamSettings>& streams);
     bool getStream(StreamSettings& stream, const std::string& id);
-    std::string addStream(StreamSettings& stream);
+    bool addStream(StreamSettings& stream);
     bool updateStream(const StreamSettings& settings);
     bool removeStream(const std::string& id);
 

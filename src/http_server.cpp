@@ -189,8 +189,12 @@ int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                 auto j = nlohmann::json::parse(session->body);
                 StreamSettings settings = j.get<StreamSettings>();
 
-                std::string id = ConfigManager::getInstance().addStream(settings);
-                send_http_response(wsi, json_to_string(nlohmann::json{ {"id", id} }), "application/json", 201);
+                if (!ConfigManager::getInstance().addStream(settings)) {
+                    send_http_response(wsi, json_to_string(nlohmann::json{ {"error","Invalid stream"} }), "application/json", 400);
+                    return 0;
+                }
+
+                send_http_response(wsi, json_to_string(nlohmann::json{ settings }), "application/json", 201);
                 return 0;
             }
 

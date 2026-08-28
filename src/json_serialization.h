@@ -31,12 +31,11 @@ inline
 void from_json(const nlohmann::json& j, VideoSettings& c) {
     j.at("device").get_to(c.device_id);
 
-    c.width = j.value("width", 0);
-    c.height = j.value("height", 0);
-    c.fps_n = j.value("fps_n", 0);
-    c.fps_d = j.value("fps_d", 1);
-
-    j.at("codec").get_to(c.codec);
+    c.width = j.value("width", c.width);
+    c.height = j.value("height", c.height);
+    c.fps_n = j.value("fps_n", c.fps_n);
+    c.fps_d = j.value("fps_d", c.fps_d);
+    c.codec = j.value("codec", c.codec);
     c.bitrate = j.value("bitrate", 0);
 }
 
@@ -44,11 +43,10 @@ inline
 void from_json(const nlohmann::json& j, AudioSettings& c) {
     j.at("device").get_to(c.device_id);
 
-    c.sampleRate = j.value("sampleRate", 0);
-    c.channel_count = j.value("channels", 0);
-
-    j.at("codec").get_to(c.codec);
-    c.bitrate = j.value("bitrate", 0);
+    c.sampleRate = j.value("sampleRate", c.sampleRate);
+    c.channel_count = j.value("channels", c.channel_count);
+    c.codec = j.value("codec", c.codec);
+    c.bitrate = j.value("bitrate", c.bitrate);
 }
 
 inline

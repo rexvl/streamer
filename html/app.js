@@ -7,6 +7,7 @@ $(function(){
   let statusMap = {};  // id -> StreamStatus
   let videoDevices = [];
   let audioDevices = [];
+  let localStreamCounter = 0;
   let activeStreamId = null;
   let _previewWs = null;
   let _previewLastUrl = null;
@@ -163,6 +164,8 @@ $(function(){
     try {
       // capture current streams so we can detect newly-created ones from the server
       const prevIds = Object.keys(streamsMap || {});
+      // preserve any local UI-only streams so they are not lost by polling
+      const localEntries = Object.entries(streamsMap || {}).filter(([k,v]) => v && (v._local || String(k).startsWith('local-')));
 
       const [streams, statuses, vdev, adev] = await Promise.all([
         apiGet('/streams'),
@@ -173,6 +176,8 @@ $(function(){
 
       streamsMap = {};
       (streams || []).forEach(s => { streamsMap[String(s.id)] = s; });
+      // re-attach preserved local entries
+      localEntries.forEach(([k,v]) => { streamsMap[k] = v; });
 
       statusMap = {};
       (statuses || []).forEach(st => { statusMap[String(st.id)] = st; });
@@ -297,6 +302,7 @@ $(function(){
     Object.values(streamsMap).forEach(s => {
       const id = String(s.id);
       const st = statusMap[id] || {};
+      const isLocal = !!(s && (s._local || String(id).startsWith('local-')));
       const tr = $('<tr/>');
       const name = id;
       const status = statusToBadge(st, s);
@@ -335,10 +341,21 @@ $(function(){
       stopAudioPreview();
     }
     try {
-      const s = await apiGet(`/streams/${id}`);
-      activeStreamId = id;
-      $('.view').addClass('hidden');
-      $('#stream-view').removeClass('hidden');
+      // if this is a local UI-only stream, render from local state and avoid requesting from backend
+      let s;
+      if (String(id).startsWith('local-') || (streamsMap[id] && streamsMap[id]._local)) {
+        s = streamsMap[id];
+        activeStreamId = id;
+        $('.view').addClass('hidden');
+        $('#stream-view').removeClass('hidden');
+      } else {
+        s = await apiGet(`/streams/${id}`);
+        activeStreamId = id;
+        $('.view').addClass('hidden');
+        $('#stream-view').removeClass('hidden');
+      }
+
+      const isLocal = !!(s && (s._local || String(id).startsWith('local-')));
 
       const st = statusMap[id] || {};
       const $sb = $('#status-bar').empty();
@@ -371,125 +388,196 @@ $(function(){
       $sel.val(curVideo);
       $sources.append($('<div/>').append($('<label/>').text('Video device')).append($sel));
 
+      // show additional video settings only for persisted streams that have a video device
+      if (!isLocal && s.video && s.video.device) {
+        try { $('#video-resolution').closest('.form-row').show(); } catch(e){}
+        try { $('#video-fps').closest('.form-row').show(); } catch(e){}
+        try { $('#video-codec').closest('.form-row').show(); } catch(e){}
+        try { $('#video-bitrate').closest('.form-row').show(); } catch(e){}
+      } else {
+        try { $('#video-resolution').closest('.form-row').hide(); } catch(e){}
+        try { $('#video-fps').closest('.form-row').hide(); } catch(e){}
+        try { $('#video-codec').closest('.form-row').hide(); } catch(e){}
+        try { $('#video-bitrate').closest('.form-row').hide(); } catch(e){}
+      }
+
       $sel.off('change').on('change', async ()=>{
         const newDevice = $sel.val();
         if (newDevice) s.video = Object.assign(s.video||{}, { device: newDevice }); else s.video = undefined;
         const payload = buildStreamPayload(s);
-        await apiPut(`/streams/${id}`, payload);
-        await refreshAll();
-        await renderStreamView(id);
+        try {
+          if (s._local || String(id).startsWith('local-')) {
+            const resp = await apiPost('/streams', payload);
+            if (resp.ok) {
+              const data = await resp.json();
+              const nextId = String(data.id);
+              delete streamsMap[id];
+              streamsMap[nextId] = data;
+              await refreshAll();
+              selectStream(nextId);
+            } else {
+              const txt = await resp.text(); alert('Create failed: '+resp.status+' '+txt);
+            }
+          } else {
+            const resp = await apiPut(`/streams/${id}`, payload);
+            if (resp.ok) {
+              try {
+                const data = await resp.json();
+                if (data) streamsMap[id] = Object.assign({}, streamsMap[id] || {}, data);
+              } catch(e){}
+              await refreshAll();
+              await renderStreamView(id);
+            } else {
+              const txt = await resp.text(); alert('Update failed: '+resp.status+' '+txt);
+            }
+          }
+        } catch(e) { console.error('update stream', e); alert('Update failed'); }
       });
 
-      // start preview if device selected
+      // start preview if device selected; hide preview area when no device
       try {
-        if (s.video && s.video.device) startPreview(id);
-        else stopPreview();
+        if (s.video && s.video.device) {
+          startPreview(id);
+          try { $('.video-preview').show(); } catch(e){}
+        } else {
+          stopPreview();
+          try { $('.video-preview').hide(); } catch(e){}
+        }
       } catch (e) { console.debug('startPreview failed', e); }
 
       // populate video resolution input, codec/bitrate controls
       // values from s.video: width,height,fps_n,fps_d,codec,bitrate
       const presets = ['1920x1080','1280x720','854x480','640x360','426x240'];
-      if (s.video && (s.video.width || s.video.height)) {
-        const wv = s.video.width ? String(s.video.width) : '';
-        const hv = s.video.height ? String(s.video.height) : '';
-        const resText = `${wv}x${hv}`;
-        $('#video-resolution').val(resText);
-      } else {
-        $('#video-resolution').val('');
-      }
+      if (!isLocal) {
+        if (s.video && (s.video.width || s.video.height)) {
+          const wv = s.video.width ? String(s.video.width) : '';
+          const hv = s.video.height ? String(s.video.height) : '';
+          const resText = `${wv}x${hv}`;
+          $('#video-resolution').val(resText);
+        } else {
+          $('#video-resolution').val('');
+        }
 
   // startPreview/stopPreview moved to top-level scope
-      // build menu items for combo button (safe to rebuild each render)
-      try {
-        const $resInput = $('#video-resolution');
-        const $btn = $('#video-resolution-btn');
-        const $menu = $('#video-resolution-menu');
-        if ($menu.length) {
-          $menu.empty();
-          presets.forEach(p => { $menu.append($('<li/>').attr('data-val', p).text(p)); });
+        // build menu items for combo button (safe to rebuild each render)
+        try {
+          const $resInput = $('#video-resolution');
+          const $btn = $('#video-resolution-btn');
+          const $menu = $('#video-resolution-menu');
+          if ($menu.length) {
+            $menu.empty();
+            presets.forEach(p => { $menu.append($('<li/>').attr('data-val', p).text(p)); });
+          }
+
+          // toggle menu when button clicked
+          $btn.off('click.videoRes').on('click.videoRes', function(e){
+            e.preventDefault();
+            if ($menu.attr('aria-hidden') === 'false') {
+              $menu.attr('aria-hidden', 'true');
+            } else {
+              $menu.attr('aria-hidden', 'false');
+            }
+          });
+
+          // choose preset
+          $menu.off('click.videoRes').on('click.videoRes', 'li', function(){
+            const v = $(this).attr('data-val');
+            $resInput.val(v).trigger('change');
+            $menu.attr('aria-hidden', 'true');
+          });
+
+          // hide when clicking outside
+          $(document).off('click.videoResOuter').on('click.videoResOuter', function(ev){
+            if (!$(ev.target).closest('.combo-wrapper').length) {
+              $menu.attr('aria-hidden', 'true');
+            }
+          });
+        } catch (e) { console.debug('resolution combo init failed', e); }
+        // fps: single text field accepts integer (30) or fraction (30000/1001)
+        let fpsVal = '';
+        if (s.video && s.video.fps_n) {
+          if (s.video.fps_d && s.video.fps_d !== 1) fpsVal = `${s.video.fps_n}/${s.video.fps_d}`;
+          else fpsVal = `${s.video.fps_n}`;
         }
+        $('#video-fps').val(fpsVal);
+        $('#video-codec').val(s.video && s.video.codec ? s.video.codec : 'x264enc');
+        // show video bitrate in kbps with fallbacks for different server shapes
+        try {
+          let vbK = '';
+          if (s.video) {
+            const vb = s.video.bitrate;
+            if (typeof vb === 'number') {
+              // if value looks like bits/sec (>1000) convert to kbps, else assume already kbps
+              vbK = (vb > 1000) ? Math.round(vb/1000) : vb;
+            } else if (s.video.bitrate_kbps && typeof s.video.bitrate_kbps === 'number') {
+              vbK = s.video.bitrate_kbps;
+            } else if (s.video.bitrate_bps && typeof s.video.bitrate_bps === 'number') {
+              vbK = Math.round(s.video.bitrate_bps/1000);
+            } else if (typeof vb === 'string') {
+              const m = vb.match(/(\d+)/);
+              if (m) vbK = parseInt(m[1],10);
+            }
+          }
+          $('#video-bitrate').val(vbK === null || vbK === undefined ? '' : String(vbK));
+        } catch(e) { $('#video-bitrate').val(''); }
 
-        // toggle menu when button clicked
-        $btn.off('click.videoRes').on('click.videoRes', function(e){
-          e.preventDefault();
-          if ($menu.attr('aria-hidden') === 'false') {
-            $menu.attr('aria-hidden', 'true');
+        // attach handlers: update stream when any video setting changes
+        $('#video-resolution, #video-fps, #video-codec, #video-bitrate').off('change').on('change', async function(){
+          s.video = s.video || {};
+          // parse resolution from input (allow formats like 1920x1080, 1920 X 1080, 1920×1080)
+          const raw = String($('#video-resolution').val() || '').trim();
+          const toParse = raw;
+          let w = 0, h = 0;
+          const m = toParse.match(/^(\d+)\s*[xX×]\s*(\d+)$/);
+          if (m) { w = parseInt(m[1], 10) || 0; h = parseInt(m[2], 10) || 0; }
+          const fpsText = String($('#video-fps').val() || '').trim();
+          const codec = $('#video-codec').val();
+          const vb = parseInt($('#video-bitrate').val()) || 0;
+
+          if (w > 0) s.video.width = w; else delete s.video.width;
+          if (h > 0) s.video.height = h; else delete s.video.height;
+
+          // nothing to sync for datalist; keep input as source of truth
+
+          // parse fps: integer or fraction
+          if (fpsText.indexOf('/') !== -1) {
+            const parts = fpsText.split('/').map(p => parseInt(p.trim(), 10));
+            if (parts.length === 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1]) && parts[0] > 0 && parts[1] > 0) {
+              s.video.fps_n = parts[0];
+              s.video.fps_d = parts[1];
+            } else {
+              delete s.video.fps_n;
+              delete s.video.fps_d;
+            }
           } else {
-            $menu.attr('aria-hidden', 'false');
+            const fn = parseInt(fpsText, 10);
+            if (Number.isFinite(fn) && fn > 0) {
+              s.video.fps_n = fn;
+              s.video.fps_d = 1;
+            } else {
+              delete s.video.fps_n;
+              delete s.video.fps_d;
+            }
           }
-        });
 
-        // choose preset
-        $menu.off('click.videoRes').on('click.videoRes', 'li', function(){
-          const v = $(this).attr('data-val');
-          $resInput.val(v).trigger('change');
-          $menu.attr('aria-hidden', 'true');
-        });
+          if (codec) s.video.codec = codec;
+          if (vb > 0) s.video.bitrate = vb; else delete s.video.bitrate;
 
-        // hide when clicking outside
-        $(document).off('click.videoResOuter').on('click.videoResOuter', function(ev){
-          if (!$(ev.target).closest('.combo-wrapper').length) {
-            $menu.attr('aria-hidden', 'true');
-          }
+          const payload = buildStreamPayload(s);
+          await apiPut(`/streams/${id}`, payload);
+          await refreshAll();
+          await renderStreamView(id);
         });
-      } catch (e) { console.debug('resolution combo init failed', e); }
-      // fps: single text field accepts integer (30) or fraction (30000/1001)
-      let fpsVal = '';
-      if (s.video && s.video.fps_n) {
-        if (s.video.fps_d && s.video.fps_d !== 1) fpsVal = `${s.video.fps_n}/${s.video.fps_d}`;
-        else fpsVal = `${s.video.fps_n}`;
+      } else {
+        try { $('#video-resolution').val(''); } catch(e){}
+        try { $('#video-fps').val(''); } catch(e){}
+        try { $('#video-codec').val(''); } catch(e){}
+        try { $('#video-bitrate').val(''); } catch(e){}
+        $('#video-resolution, #video-fps, #video-codec, #video-bitrate').off('change');
+        $('#video-resolution-btn').off('click.videoRes');
+        $('#video-resolution-menu').off('click.videoRes').attr('aria-hidden', 'true');
+        $(document).off('click.videoResOuter');
       }
-      $('#video-fps').val(fpsVal);
-      $('#video-codec').val(s.video && s.video.codec ? s.video.codec : 'x264enc');
-      $('#video-bitrate').val(s.video && s.video.bitrate ? s.video.bitrate : '');
-
-      // attach handlers: update stream when any video setting changes
-      $('#video-resolution, #video-fps, #video-codec, #video-bitrate').off('change').on('change', async function(){
-        s.video = s.video || {};
-        // parse resolution from input (allow formats like 1920x1080, 1920 X 1080, 1920×1080)
-        const raw = String($('#video-resolution').val() || '').trim();
-        const toParse = raw;
-        let w = 0, h = 0;
-        const m = toParse.match(/^(\d+)\s*[xX×]\s*(\d+)$/);
-        if (m) { w = parseInt(m[1], 10) || 0; h = parseInt(m[2], 10) || 0; }
-        const fpsText = String($('#video-fps').val() || '').trim();
-        const codec = $('#video-codec').val();
-        const vb = parseInt($('#video-bitrate').val()) || 0;
-
-        if (w > 0) s.video.width = w; else delete s.video.width;
-        if (h > 0) s.video.height = h; else delete s.video.height;
-
-        // nothing to sync for datalist; keep input as source of truth
-
-        // parse fps: integer or fraction
-        if (fpsText.indexOf('/') !== -1) {
-          const parts = fpsText.split('/').map(p => parseInt(p.trim(), 10));
-          if (parts.length === 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1]) && parts[0] > 0 && parts[1] > 0) {
-            s.video.fps_n = parts[0];
-            s.video.fps_d = parts[1];
-          } else {
-            delete s.video.fps_n;
-            delete s.video.fps_d;
-          }
-        } else {
-          const fn = parseInt(fpsText, 10);
-          if (Number.isFinite(fn) && fn > 0) {
-            s.video.fps_n = fn;
-            s.video.fps_d = 1;
-          } else {
-            delete s.video.fps_n;
-            delete s.video.fps_d;
-          }
-        }
-
-        if (codec) s.video.codec = codec;
-        if (vb > 0) s.video.bitrate = vb; else delete s.video.bitrate;
-
-        const payload = buildStreamPayload(s);
-        await apiPut(`/streams/${id}`, payload);
-        await refreshAll();
-        await renderStreamView(id);
-      });
 
       // audio
       const $audio = $('#audio-list').empty();
@@ -500,46 +588,125 @@ $(function(){
       $asel.val(curAudio);
       $audio.append($('<div/>').append($('<label/>').text('Audio device')).append($asel));
 
+      // show additional audio settings only for persisted streams that have an audio device
+      if (!isLocal && s.audio && s.audio.device) {
+        try { $('#audio-meter').show(); } catch(e){}
+        try { $('#audio-value').show(); } catch(e){}
+        try { $('#audio-preview-status').show(); } catch(e){}
+        try { $('#audio-samplerate').closest('.form-row').show(); } catch(e){}
+        try { $('#audio-channels').closest('.form-row').show(); } catch(e){}
+        try { $('#audio-codec').closest('.form-row').show(); } catch(e){}
+        try { $('#audio-bitrate').closest('.form-row').show(); } catch(e){}
+      } else {
+        try { $('#audio-meter').hide(); } catch(e){}
+        try { $('#audio-value').hide(); } catch(e){}
+        try { $('#audio-preview-status').hide(); } catch(e){}
+        try { $('#audio-samplerate').closest('.form-row').hide(); } catch(e){}
+        try { $('#audio-channels').closest('.form-row').hide(); } catch(e){}
+        try { $('#audio-codec').closest('.form-row').hide(); } catch(e){}
+        try { $('#audio-bitrate').closest('.form-row').hide(); } catch(e){}
+      }
+
       $asel.off('change').on('change', async ()=>{
         const newDevice = $asel.val();
         if (newDevice) s.audio = Object.assign(s.audio||{}, { device: newDevice }); else s.audio = undefined;
         const payload = buildStreamPayload(s);
-        await apiPut(`/streams/${id}`, payload);
-        await refreshAll();
-        await renderStreamView(id);
+        try {
+          if (s._local || String(id).startsWith('local-')) {
+            const resp = await apiPost('/streams', payload);
+            if (resp.ok) {
+              const data = await resp.json();
+              delete streamsMap[id];
+              streamsMap[String(data.id)] = data;
+              await refreshAll();
+              selectStream(String(data.id));
+            } else {
+              const txt = await resp.text(); alert('Create failed: '+resp.status+' '+txt);
+            }
+          } else {
+            const resp = await apiPut(`/streams/${id}`, payload);
+            if (resp.ok) {
+              try { const data = await resp.json(); if (data) streamsMap[id] = data; } catch(e){}
+              await refreshAll();
+              await renderStreamView(id);
+            } else {
+              const txt = await resp.text(); alert('Update failed: '+resp.status+' '+txt);
+            }
+          }
+        } catch(e) { console.error('update stream', e); alert('Update failed'); }
       });
 
-      // start audio preview if device selected
+      // start audio preview if device selected (only for persisted streams)
       try {
-        if (s.audio && s.audio.device) startAudioPreview(id);
-        else stopAudioPreview();
+        if (!isLocal) {
+          if (s.audio && s.audio.device) startAudioPreview(id);
+          else stopAudioPreview();
+
+          // populate audio controls
+          $('#audio-samplerate').val(s.audio && s.audio.sampleRate ? s.audio.sampleRate : '48000');
+          $('#audio-channels').val(s.audio && s.audio.channels ? s.audio.channels : '2');
+          $('#audio-codec').val(s.audio && s.audio.codec ? s.audio.codec : 'aac');
+          // show audio bitrate in kbps with fallbacks
+          try {
+            let abK = '';
+            if (s.audio) {
+              const ab = s.audio.bitrate;
+              if (typeof ab === 'number') abK = (ab > 1000) ? Math.round(ab/1000) : ab;
+              else if (s.audio.bitrate_kbps && typeof s.audio.bitrate_kbps === 'number') abK = s.audio.bitrate_kbps;
+              else if (s.audio.bitrate_bps && typeof s.audio.bitrate_bps === 'number') abK = Math.round(s.audio.bitrate_bps/1000);
+              else if (typeof ab === 'string') { const m = ab.match(/(\d+)/); if (m) abK = parseInt(m[1],10); }
+            }
+            $('#audio-bitrate').val(abK === null || abK === undefined || abK === '' ? '' : String(abK));
+          } catch(e) { $('#audio-bitrate').val(''); }
+
+          // audio change handlers (only when editing persisted stream)
+          $('#audio-samplerate, #audio-channels, #audio-codec, #audio-bitrate').off('change').on('change', async function(){
+            s.audio = s.audio || {};
+            const sr = parseInt($('#audio-samplerate').val()) || 48000;
+            const ch = parseInt($('#audio-channels').val()) || 2;
+            const codec = $('#audio-codec').val();
+            const ab = parseInt($('#audio-bitrate').val()) || 128;
+
+            s.audio.sampleRate = sr;
+            s.audio.channels = ch;
+            s.audio.codec = codec;
+            // server expects bitrate in bits/sec
+            s.audio.bitrate = ab * 1000;
+
+            const payload = buildStreamPayload(s);
+            try {
+              if (s._local || String(id).startsWith('local-')) {
+                const resp = await apiPost('/streams', payload);
+                if (resp.ok) {
+                  const data = await resp.json();
+                  delete streamsMap[id];
+                  streamsMap[String(data.id)] = data;
+                  await refreshAll();
+                  selectStream(String(data.id));
+                } else {
+                  const txt = await resp.text(); alert('Create failed: '+resp.status+' '+txt);
+                }
+              } else {
+                const resp = await apiPut(`/streams/${id}`, payload);
+                if (resp.ok) {
+                  try { const data = await resp.json(); if (data) streamsMap[id] = data; } catch(e){}
+                  await refreshAll();
+                  await renderStreamView(id);
+                } else {
+                  const txt = await resp.text(); alert('Update failed: '+resp.status+' '+txt);
+                }
+              }
+            } catch(e) { console.error('update stream', e); alert('Update failed'); }
+          });
+        } else {
+          // for local streams ensure audio controls are blank/hidden and no preview
+          try { stopAudioPreview(); } catch(e){}
+          try { $('#audio-samplerate').val(''); } catch(e){}
+          try { $('#audio-channels').val(''); } catch(e){}
+          try { $('#audio-codec').val(''); } catch(e){}
+          try { $('#audio-bitrate').val(''); } catch(e){}
+        }
       } catch (e) { console.debug('startAudioPreview failed', e); }
-
-      // populate audio controls
-      $('#audio-samplerate').val(s.audio && s.audio.sampleRate ? s.audio.sampleRate : '48000');
-      $('#audio-channels').val(s.audio && s.audio.channels ? s.audio.channels : '2');
-      $('#audio-codec').val(s.audio && s.audio.codec ? s.audio.codec : 'aac');
-      $('#audio-bitrate').val(s.audio && s.audio.bitrate ? Math.round(s.audio.bitrate/1000) : '128');
-
-      // audio change handlers
-      $('#audio-samplerate, #audio-channels, #audio-codec, #audio-bitrate').off('change').on('change', async function(){
-        s.audio = s.audio || {};
-        const sr = parseInt($('#audio-samplerate').val()) || 48000;
-        const ch = parseInt($('#audio-channels').val()) || 2;
-        const codec = $('#audio-codec').val();
-        const ab = parseInt($('#audio-bitrate').val()) || 128;
-
-        s.audio.sampleRate = sr;
-        s.audio.channels = ch;
-        s.audio.codec = codec;
-        // server expects bitrate in bits/sec
-        s.audio.bitrate = ab * 1000;
-
-        const payload = buildStreamPayload(s);
-        await apiPut(`/streams/${id}`, payload);
-        await refreshAll();
-        await renderStreamView(id);
-      });
 
       // outputs: render up to 5 outputs with status dot, number, toggle and fields
       const $outs = $('#outputs-list').empty();
@@ -749,19 +916,18 @@ $(function(){
     renderStreamView(id);
   }
 
-  // create stream: create with one disabled default output without prompts
+  // create stream: immediately register on server to obtain id, then open for editing
   $('#btn-new-stream').on('click', async ()=>{
     try{
-      // include default audio.sampleRate = 48000 so new streams have sensible defaults
-      const body = { outputs: [ { url: 'rtmp://', enabled: false } ], audio: { sampleRate: 48000 } };
+      const body = { outputs: [ { url: 'rtmp://', enabled: false } ] };
       const resp = await apiPost('/streams', body);
-      if (resp.status === 201) {
+      if (resp.ok) {
         const data = await resp.json();
         await refreshAll();
-        // open newly created stream for editing
         if (data && data.id) selectStream(String(data.id));
       } else {
-        const txt = await resp.text(); alert('Create failed: '+resp.status+' '+txt);
+        const txt = await resp.text();
+        alert('Create failed: '+resp.status+' '+txt);
       }
     } catch (e) { console.error('create stream', e); alert('Create failed'); }
   });

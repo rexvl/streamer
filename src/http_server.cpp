@@ -194,7 +194,7 @@ int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                     return 0;
                 }
 
-                send_http_response(wsi, json_to_string(nlohmann::json{ settings }), "application/json", 201);
+                send_http_response(wsi, json_to_string(settings), "application/json", 201);
                 return 0;
             }
 
@@ -209,7 +209,7 @@ int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                     send_http_response(wsi, json_to_string(nlohmann::json{ {"error","Stream not found"} }), "application/json", 404);
                     return 0;
                 }
-                send_http_response(wsi, json_to_string(nlohmann::json{ {"id", id}, {"status","updated"} }), "application/json");
+                send_http_response(wsi, json_to_string(settings), "application/json");
                 return 0;
             }
         }

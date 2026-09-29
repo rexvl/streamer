@@ -4,52 +4,32 @@
 #include <cstdint>
 #include <config_manager.h>
 #include <preview_state.h>
+#include <media_capture.h>
+#include <media_pipeline.h>
+#include <condition_variable>
 
 class VideoSource {
-    const GstElement* pipeline_;
+    GstElement* stream_bin_;
     VideoSettings settings_; 
-    std::shared_ptr<PreviewState> preview_;
     GstElement* video_bin_{ nullptr };
-    GstElement* video_tee_{ nullptr };
-    std::atomic<uint32_t> frame_count_{ 0 };
-    uint64_t preview_index_{0};
+    GstElement* tee_{ nullptr };
+    std::shared_ptr<MediaCapture> capture_;
+    GstPad* ghost_pad_{ nullptr };
+    GstPad* src_pad_{ nullptr };
 
-    GstElement* capture_tee_{ nullptr };
-    GstElement* preview_bin_{ nullptr };
-    GstPad* preview_tee_pad_{ nullptr };
-    GstElement* fakesink_{ nullptr };
+    std::mutex mutex_;
+    std::condition_variable unlink_cv_;
 
-    std::atomic<bool> preview_starting_{false};
-    std::atomic<bool> preview_stopping_{ false };
-
-    bool preview_enabled_{ false };
-
-    GstElement* create_preview();
-
-    static GstPadProbeReturn process_jpeg(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
-    static GstPadProbeReturn start_preview_idle(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
-    static GstPadProbeReturn stop_preview_idle(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
-    static GstPadProbeReturn capture_src_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
-    static GstPadProbeReturn encoder_sink_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
-
-    bool add_preview_branch();
-    void remove_preview_branch();
-
-    void setVideoPreview(const uint8_t* buffer, const size_t buffer_size);
-
-    void startVideoPreview();
-    void stopVideoPreview();
-
+    void destroy();
+    static GstPadProbeReturn unlink_cb(GstPad* pad, GstPadProbeInfo*, gpointer user_data);
+    void unlink();
     static GstElement* createEncoder(const VideoSettings& settings);
 public:
-    VideoSource(const GstElement* p, const VideoSettings& settings, const std::shared_ptr<PreviewState>& preview);
+    VideoSource(GstElement* stream_bin, const VideoSettings& settings);
     ~VideoSource();
-    bool create();
+    bool create(std::shared_ptr<MediaCapture>& capture);
     bool update(const VideoSettings& settings);
 
-    void syncPreview();
-    bool operator==(GstElement* other) const;
-
-    void updateStats(std::shared_ptr<StreamStatus>& stats);
-    GstElement* get_tee();
+    GstPad* getNextSrcPad();
+    void removeSrcPad(GstPad* src_pad);
 };

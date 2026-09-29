@@ -3,99 +3,46 @@
 #include <video_source.h>
 #include <audio_source.h>
 #include <media_output.h>
-
+#include <media_pipeline.h>
+#include <media_utils.h>
 #include <config_manager.h>
 
 #include <gst/gst.h>
 #include <cstdio>
 #include <deque>
 
-MediaStream::MediaStream(const std::shared_ptr<PreviewState>& preview,
+MediaStream::MediaStream(MediaPipeline* pipeline,
+                         const std::shared_ptr<PreviewState>& preview,
                          const std::shared_ptr<StreamStatus>& status) :
-    preview_(preview), status_(status) {
+    pipeline_(pipeline), preview_(preview), status_(status) {
     printf("MediaStream::MediaStream");
 }
 
-GstBusSyncReply MediaStream::bus_sync_handler(GstBus* bus, GstMessage* message, gpointer user_data) {
-    auto self = static_cast<MediaStream*>(user_data);
-
-    if (GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR) {
-        GstObject* src = GST_MESSAGE_SRC(message);
-
-        for (auto& [_, output] : self->outputs) {
-             // Check if the failed element belongs to our output_bin
-            if (gst_object_has_as_ancestor(src, GST_OBJECT(output->getElement()))) {
-                printf("[SYNC] Network error! Immediate hardware block.\n");
-                output->blockTeePads();
-                break;
-            }
-        }
-    }
-    return GST_BUS_PASS;
-}
-
 bool MediaStream::create(const StreamSettings& settings) {
-    printf("MediaStream::create");
+    printf("MediaStream::create\n");
 
-    pipeline = gst_pipeline_new(nullptr);
-    if (!pipeline) {
+    bin_ = pipeline_->createChildBin();
+    if (!bin_) {
         return false;
     }
-
-    bus = gst_element_get_bus(GST_ELEMENT(pipeline));
-    if (!bus) {
-        return false;
-    }
-
-    gst_bus_set_sync_handler(bus, bus_sync_handler, this, nullptr);
 
     if (settings.video && settings.video->device) {
         if (!addVideo(*settings.video)) {
             return false;
         }
     }
-
+/*
     if (settings.audio && settings.audio->device) {
         if (!addAudio(*settings.audio)) {
             return false;
         }
     }
-
-    if (!syncOutputs(settings.outputs, false)) {
+*/
+    if (!syncOutputs(settings.outputs)) {
         return false;
     }
 
-    return true;
-}
-
-bool MediaStream::start() {
-    auto status = gst_element_set_state(GST_ELEMENT(pipeline), GST_STATE_PLAYING);
-    if (status == GST_STATE_CHANGE_FAILURE) {
-        ProcessError();
-        return false;
-    }
-
-    return true;
-}
-
-void MediaStream::syncPreview() {
-    if (video) {
-        video->syncPreview();
-    }
-}
-
-void MediaStream::updateStatus() {
-    if (video) {
-        video->updateStats(status_);
-    }
-
-    if (audio) {
-        audio->updateStats(status_);
-    }
-
-    for (auto& [id, output] : outputs) {
-        output->updateStats(status_);
-    }
+    return gst_element_sync_state_with_parent(bin_);
 }
 
 bool MediaStream::addVideo(const VideoSettings& settings) {
@@ -103,15 +50,21 @@ bool MediaStream::addVideo(const VideoSettings& settings) {
         return false;
     }
 
-    video = std::make_unique<VideoSource>(pipeline, settings, preview_);
-    if (!video->create()) {
+    auto video_capture = pipeline_->getVideoCapture(settings.device);
+    if (!video_capture) {
         return false;
     }
 
-    status_->setVideoStatus(SourceStatus::kSuccess);
+    video = std::make_unique<VideoSource>(bin_, settings);
+    if (!video->create(video_capture)) {
+        return false;
+    }
+
+    //status_->setVideoStatus(SourceStatus::kSuccess);
     return true;
 }
 
+/*
 bool MediaStream::addAudio(const AudioSettings& settings) {
     if (audio || !outputs.empty() || !settings.device) {
         return false;
@@ -125,37 +78,32 @@ bool MediaStream::addAudio(const AudioSettings& settings) {
     status_->setAudioStatus(SourceStatus::kSuccess);
     return true;
 }
+*/
 
-bool MediaStream::addOutput(const std::string& id, const OutputSettings& settings, bool sync_state) {
-    auto output = std::make_unique<MediaOutput>(pipeline, settings);
+bool MediaStream::addOutput(const std::string& id, const OutputSettings& settings) {
+    auto output = std::make_unique<MediaOutput>(bin_, settings);
     if (!output->create()) {
         return false;
     }
 
     if (video) {
-        if (!output->addVideo(video->get_tee())) {
+        if (!output->addVideo(video.get())) {
             return false;
         }
     }
-
+/*
     if (audio) {
         if (!output->addAudio(audio->get_tee())) {
             return false;
         }
     }
-
-    if (sync_state) {
-        if (!output->syncState()) {
-            return false;
-        }
+*/
+    if (!output->syncState()) {
+        return false;
     }
 
     outputs.emplace(id, std::move(output));
     return true;
-}
-
-bool MediaStream::IsOutputsEmpty() {
-    return outputs.empty();
 }
 
 bool MediaStream::removeVideo() {
@@ -166,7 +114,7 @@ bool MediaStream::removeAudio() {
     return false;
 }
 
-bool MediaStream::syncOutputs(std::map<std::string, OutputSettings> settings, bool sync_state) {
+bool MediaStream::syncOutputs(std::map<std::string, OutputSettings> settings) {
     if (!video && !audio) {
         return false;
     }
@@ -189,165 +137,11 @@ bool MediaStream::syncOutputs(std::map<std::string, OutputSettings> settings, bo
     }
 
     for (const auto& settings_it : settings) {
-        if (!addOutput(settings_it.first, settings_it.second, sync_state)) {
+        if (!addOutput(settings_it.first, settings_it.second)) {
             return false;
         }
     }
 
-    return true;
-}
-
-bool MediaStream::onError(GstElement* src) {
-    if (video && *video == src) {
-        printf("video source failed\n");
-        status_->setVideoStatus(SourceStatus::kFail);
-        return false;
-    }
-
-    if (audio && *audio == src) {
-        printf("audio source failed\n");
-        status_->setAudioStatus(SourceStatus::kFail);
-        return false;
-    }
-
-    for (auto& it : outputs) {
-        auto& output = it.second;
-        if (output->getElement() == src) {
-            printf("output:%s failed\n", it.first.c_str());
-            status_->setOutputStatus(it.first, OutputStatus::kFail);
-            return true;
-        }
-    }
-
-    return false;
-}
-
-bool MediaStream::ProcessError() {
-    return ProcessMessage(GST_MESSAGE_ERROR);
-}
-
-bool MediaStream::ProcessMessage(uint64_t mask) {
-    //GstMessage* msg = gst_bus_pop(bus);
-    GstMessage* msg = gst_bus_pop_filtered(bus, static_cast<GstMessageType>(mask));
-    if (!msg) {
-        return true;
-    }
-
-    switch (GST_MESSAGE_TYPE(msg)) {
-    case GST_MESSAGE_ERROR:
-    {
-        std::deque<GstElement*> stack;
-        printf("!!!pipeline error!!!\n");
-
-        GstObject* obj = GST_MESSAGE_SRC(msg);
-        while (obj) {
-            stack.push_front(GST_ELEMENT(obj));
-
-            g_print("%s (%s)\n",
-                GST_OBJECT_NAME(obj),
-                G_OBJECT_TYPE_NAME(obj));
-
-            obj = gst_object_get_parent(obj);
-        }
-
-        GError* err = NULL;
-        gchar* debug = NULL;
-
-        gst_message_parse_error(msg, &err, &debug);
-
-        g_printerr("Error from %s: err:'%s' debug:'%s'\n",
-            GST_OBJECT_NAME(GST_MESSAGE_SRC(msg)),
-            err->message, debug);
-
-        g_error_free(err);
-        g_free(debug);
-
-        if (stack.size() < 2) {
-            return false;
-        }
-
-        bool result = onError(stack[1]);
-        gst_message_unref(msg);
-        return result;
-    }
-
-    case GST_MESSAGE_EOS:
-        gst_message_unref(msg);
-        printf("!!!EOS!!!\n");
-        return false;
-
-    case GST_MESSAGE_STATE_CHANGED:
-    {
-        GstState old_state;
-        GstState new_state;
-        GstState pending;
-
-        gst_message_parse_state_changed(
-            msg,
-            &old_state,
-            &new_state,
-            &pending);
-
-        GstObject* obj = GST_MESSAGE_SRC(msg);
-/*
-        g_print("%s (%s): %s -> %s (pending: %s)\n",
-            GST_OBJECT_NAME(obj),
-            G_OBJECT_TYPE_NAME(obj),
-            gst_element_state_get_name(old_state),
-            gst_element_state_get_name(new_state),
-            gst_element_state_get_name(pending));
-*/
-        if (obj == GST_OBJECT(pipeline) && GST_STATE_PLAYING == new_state) {
-            printf("!!!PLAYING!!!\n");
-            playing_ = true;
-        }
-
-        break;
-    }
-
-    case GST_MESSAGE_ELEMENT:
-    {
-        if (!preview_->isAudioPreviewEnabled()) {
-            break;
-        }
-
-        const GstStructure* structure = gst_message_get_structure(msg);
-        if (!structure) {
-            break;
-        }
-
-        if (!gst_structure_has_name(structure, "level")) {
-            break;
-        }
-
-        const GValue* peak = gst_structure_get_value(structure, "peak");
-        if (!peak) {
-            break;
-        }
-
-        GValueArray* array = static_cast<GValueArray*>(g_value_get_boxed(peak));
-        guint channels = array->n_values;
-        if (channels <= 0) {
-            break;
-        }
-
-        double level = 0.0;
-        for (guint i = 0; i < array->n_values; ++i) {
-            const GValue* value = &array->values[i];
-            if (G_VALUE_HOLDS_DOUBLE(value)) {
-                level += g_value_get_double(value);
-            }
-        }
-
-        preview_->setAudioLevel(level / channels);
-        break;
-    }
-
-    default:
-        break;
-    }
-
-    gst_message_unref(msg);
     return true;
 }
 
@@ -371,7 +165,7 @@ bool MediaStream::update(const StreamSettings& settings) {
             return false;
         }
     }
-
+/*
     if (settings.audio && settings.audio->device) {
         if (!audio) {
             // audio settings added
@@ -390,17 +184,11 @@ bool MediaStream::update(const StreamSettings& settings) {
             return false;
         }
     }
-
-    return syncOutputs(settings.outputs, true);
+*/
+    return syncOutputs(settings.outputs);
 }
 
 MediaStream::~MediaStream() {
-    // Ensure pipeline is stopped before tearing down branches
-    if (pipeline) {
-        gst_element_set_state(pipeline, GST_STATE_NULL);
-        gst_element_get_state(pipeline, NULL, NULL, GST_CLOCK_TIME_NONE);
-    }
-
     // Release outputs first so they can release requested tee pads and remove their branches
     outputs.clear();
 
@@ -408,13 +196,30 @@ MediaStream::~MediaStream() {
     video.reset();
     audio.reset();
 
-    if (bus) {
-        gst_object_unref(bus);
-        bus = nullptr;
+    if (bin_) {
+        gst_bin_remove(GST_BIN(pipeline_->getElement()), bin_);
+        bin_ = nullptr;
+    }
+}
+
+GstElement* MediaStream::createChildBin() {
+    return ::createChildBin(bin_);
+}
+
+GstElement* MediaStream::getElement() {
+    return bin_;
+}
+
+bool MediaStream::onError(GstElement* element) {
+    auto it = outputs.begin();
+    while (it != outputs.end()) {
+        auto& output = it->second;
+        if (gst_object_has_as_ancestor(GST_OBJECT(element), GST_OBJECT(output->getElement()))) {
+            outputs.erase(it);
+            return true;
+        }
+        ++it;
     }
 
-    if (pipeline) {
-        gst_object_unref(pipeline);
-        pipeline = nullptr;
-    }
+    return false;
 }

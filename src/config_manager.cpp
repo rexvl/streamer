@@ -60,7 +60,6 @@ void ConfigManager::getActiveStreams(std::map<std::string, StreamContext>& strea
         auto& src_context  = it.second;
         auto& src_settings = src_context.settings;
 
-
         StreamSettings settings;
         if (src_settings.video && src_settings.video->device) {
             settings.video = src_settings.video;

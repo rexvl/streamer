@@ -16,6 +16,8 @@
 #include <media_stream.h>
 #include <http_server.h>
 
+#include <media_pipeline.h>
+
 #include <windows.h> // SetConsoleOutputCP
 
 static const gchar* get_device_id(const GstStructure* props) {
@@ -25,13 +27,6 @@ static const gchar* get_device_id(const GstStructure* props) {
     }
 
     return id;
-}
-
-void updateStatus(std::map<std::string, std::unique_ptr<MediaStream>>& cur_streams) {
-    for (auto& cs_it : cur_streams) {
-        auto& stream = cs_it.second;
-        stream->updateStatus();
-    }
 }
 
 int main() {
@@ -57,7 +52,8 @@ int main() {
 
     std::chrono::steady_clock::time_point last_sync = std::chrono::steady_clock::now();
 
-    std::map<std::string, std::unique_ptr<MediaStream>> cur_streams;
+    std::shared_ptr<MediaPipeline> pipeline;
+
     bool running = true;
     while (running) {
         GstMessage* dev_monitor_msg = gst_bus_timed_pop(dev_monitor_bus, 10 * GST_MSECOND);
@@ -133,17 +129,23 @@ int main() {
             gst_message_unref(dev_monitor_msg);
         }
 
-        auto cs_it = cur_streams.begin();
-        while (cs_it != cur_streams.end()) {
-            auto& stream = cs_it->second;
-            stream->syncPreview();
-
-            if (!stream->ProcessMessage()) {
-                cs_it = cur_streams.erase(cs_it);
-                continue;
+        if (!pipeline) {
+            pipeline = std::make_unique<MediaPipeline>();
+            if (!pipeline || !pipeline->create()) {
+                return -1;
             }
-            cs_it++;
         }
+
+        if (!pipeline->ProcessMessage()) {
+            pipeline.reset();
+            continue;
+        }
+
+        if (!pipeline->IsPlaying()) {
+            continue;
+        }
+
+        //printf("playing...\n");
 
         const auto cur_time = std::chrono::steady_clock::now();
         if (last_sync + std::chrono::milliseconds(2000) < cur_time) {
@@ -152,46 +154,8 @@ int main() {
             std::map<std::string, StreamContext> new_streams;
             ConfigManager::getInstance().getActiveStreams(new_streams);
 
-            // sync existed streams
-            auto cs_it = cur_streams.begin();
-            while (cs_it != cur_streams.end()) { 
-                auto ns_it = new_streams.find(cs_it->first);
-                if (ns_it == new_streams.end()) {
-                    // remove whole stream
-                    cs_it = cur_streams.erase(cs_it);
-                    continue;
-                }
 
-                const auto& settings = ns_it->second.settings;
-                auto& media_stream = cs_it->second;
-
-                if (!media_stream->update(settings)) {
-                    cs_it = cur_streams.erase(cs_it);
-                    continue;
-                }
-
-                new_streams.erase(ns_it);
-                cs_it++;
-            }
-
-            // create new streams
-            for (const auto& ns_it : new_streams) {
-                const auto& context = ns_it.second;
-
-                auto media_stream = std::make_unique<MediaStream>(context.preview, context.status);
-                if (!media_stream->create(context.settings)) {
-                    continue;
-                }
-
-                if (!media_stream->start()) {
-                    continue;
-                }
-
-                printf("started stream=%s\n", ns_it.first.c_str());
-                cur_streams[ns_it.first] = std::move(media_stream);
-            }
-
-            updateStatus(cur_streams);
+            pipeline->syncStreams(new_streams);
         }
     }
 

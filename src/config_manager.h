@@ -18,7 +18,7 @@ enum class SourceStatus {
 };
 
 struct VideoSettings {
-    std::string device_id;
+    uint64_t device_index{0};
     GstDevice* device{ nullptr };
 
     int width{ 1920 };
@@ -32,7 +32,7 @@ struct VideoSettings {
     int bitrate{ 1000 }; // kbps
 
     bool operator==(const VideoSettings & other) {
-        return device_id == other.device_id &&
+        return device_index == other.device_index &&
                device == other.device &&
                width  == other.width &&
                height == other.height &&
@@ -44,7 +44,7 @@ struct VideoSettings {
 };
 
 struct AudioSettings {
-    std::string device_id;
+    uint64_t device_index{0};
     GstDevice* device{ nullptr };
 
     int sampleRate{ 48000 };
@@ -56,7 +56,7 @@ struct AudioSettings {
     int bitrate{ 128 };
 
     bool operator==(const AudioSettings& other) {
-        return device_id == other.device_id &&
+        return device_index == other.device_index &&
             device == other.device &&
             sampleRate == other.sampleRate &&
             channel_count == other.channel_count &&
@@ -171,9 +171,17 @@ class ConfigManager {
     std::map<GstDevice*, std::set<std::string>> video_streams_index_;
     std::map<GstDevice*, std::set<std::string>> audio_streams_index_;
 
-    std::map<std::string, std::shared_ptr<DeviceInfo>> video_devices_;
-    std::map<std::string, std::shared_ptr<DeviceInfo>> audio_devices_;
+    std::map<uint64_t, std::shared_ptr<DeviceInfo>> video_devices_;
+    std::map<uint64_t, std::shared_ptr<DeviceInfo>> audio_devices_;
     uint64_t next_stream_id_{0};
+
+    uint64_t last_device_index_{ 0 };
+    std::map<std::string, uint64_t> device_to_index_;
+    std::map<uint64_t, std::string> index_to_device_;
+
+    uint64_t ensureDeviceIndex(const std::string& device_id);
+    uint64_t getDeviceIndex(const std::string& device_id);
+    std::string getDeviceId(const uint64_t index);
 
     void addStream(std::map<std::string, std::set<std::string>>& device_streams,
                    const std::string& device_id, const std::string& stream_id);
@@ -208,8 +216,8 @@ public:
     void addAudioDevice(const std::string& id, const std::string& name, GstDevice* device);
     void removeVideoDevice(const std::string& id);
     void removeAudioDevice(const std::string& id);
-    void getVideoDevices(std::map<std::string, std::shared_ptr<DeviceInfo>>& video_devices);
-    void getAudioDevices(std::map<std::string, std::shared_ptr<DeviceInfo>>& audip_devices);
+    void getVideoDevices(std::map<uint64_t, std::shared_ptr<DeviceInfo>>& video_devices);
+    void getAudioDevices(std::map<uint64_t, std::shared_ptr<DeviceInfo>>& audip_devices);
     GstDevice* getVideoDevice(const std::string& id);
     GstDevice* getAudioDevice(const std::string& id);
 

@@ -67,6 +67,7 @@ int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                 // respond with list for GET or default
                 std::map<std::string, StreamSettings> streams;
                 ConfigManager::getInstance().getStreams(streams);
+
                 send_http_response(wsi, json_to_string(streams), "application/json");
                 return 0;
             }
@@ -79,6 +80,7 @@ int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                     send_http_response(wsi, json_to_string(nlohmann::json{ {"error","Stream not found"} }), "application/json", 404);
                     return 0;
                 }
+
                 send_http_response(wsi, json_to_string(settings), "application/json");
                 return 0;
             }
@@ -102,14 +104,14 @@ int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason,
             }
 
             if (path == "/devices/video") {
-                std::map<std::string, std::shared_ptr<DeviceInfo>> video_devices;
+                std::map<uint64_t, std::shared_ptr<DeviceInfo>> video_devices;
                 ConfigManager::getInstance().getVideoDevices(video_devices);
                 send_http_response(wsi, json_to_string(video_devices), "application/json");
                 return 0;
             }
 
             if (path == "/devices/audio") {
-                std::map<std::string, std::shared_ptr<DeviceInfo>> audio_devices;
+                std::map<uint64_t, std::shared_ptr<DeviceInfo>> audio_devices;
                 ConfigManager::getInstance().getAudioDevices(audio_devices);
                 send_http_response(wsi, json_to_string(audio_devices), "application/json");
                 return 0;
@@ -212,8 +214,8 @@ int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                 send_http_response(wsi, json_to_string(settings), "application/json");
                 return 0;
             }
-        }
-        catch (const std::exception& e) {
+
+        } catch (const std::exception& e) {
             send_http_response(wsi, json_to_string(nlohmann::json{ {"error", e.what()} }), "application/json", 400);
             return 0;
         }

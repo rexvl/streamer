@@ -29,7 +29,7 @@ void from_json(const nlohmann::json& j, AudioSettings::Codec& c) {
 
 inline
 void from_json(const nlohmann::json& j, VideoSettings& c) {
-    j.at("device").get_to(c.device_id);
+    j.at("device").get_to(c.device_index);
 
     c.width = j.value("width", c.width);
     c.height = j.value("height", c.height);
@@ -41,7 +41,7 @@ void from_json(const nlohmann::json& j, VideoSettings& c) {
 
 inline
 void from_json(const nlohmann::json& j, AudioSettings& c) {
-    j.at("device").get_to(c.device_id);
+    j.at("device").get_to(c.device_index);
 
     c.sampleRate = j.value("sampleRate", c.sampleRate);
     c.channel_count = j.value("channels", c.channel_count);
@@ -113,7 +113,7 @@ void to_json(nlohmann::json& j, const VideoSettings::Codec& c) {
 inline
 void to_json(nlohmann::json& j, const VideoSettings& s) {
     j = nlohmann::json{
-        { "device", s.device_id }
+        { "device", s.device_index }
     };
 
     if (s.width > 0) {
@@ -147,7 +147,7 @@ void to_json(nlohmann::json& j, const AudioSettings::Codec& c) {
 inline
 void to_json(nlohmann::json& j, const AudioSettings& s) {
     j = nlohmann::json{
-        { "device", s.device_id }
+        { "device", s.device_index }
     };
 
     if (s.sampleRate > 0) {
@@ -218,15 +218,15 @@ void to_json(nlohmann::json& j, const DeviceInfo& s) {
 }
 
 inline
-void to_json(nlohmann::json& j, const std::map<std::string, std::shared_ptr<DeviceInfo>>& devices) {
+void to_json(nlohmann::json& j, const std::map<uint64_t, std::shared_ptr<DeviceInfo>>& devices) {
     // Return devices as an array of objects { "id": <device_id>, "name": <display_name> }
     // so web UI can display human-readable names while keeping ids.
     j = nlohmann::json::array();
 
-    for (const auto& it : devices) {
+    for (const auto& [ device_index, device ] : devices) {
         nlohmann::json di;
-        di["id"] = it.first;
-        di["name"] = it.second ? it.second->name_ : std::string();
+        di["id"] = device_index;
+        di["name"] = device->name_;
         j.push_back(di);
     }
 }

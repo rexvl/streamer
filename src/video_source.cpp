@@ -162,14 +162,8 @@ bool VideoSource::create(std::shared_ptr<MediaCapture>& capture) {
         return false;
     }
 
-    auto src_pad = capture->getNextSrcPad();
+    auto src_pad = capture->linkNextSrcPad(ghost_pad_);
     if (!src_pad) {
-        return false;
-    }
-
-    // link capture's src to stream's sink
-    GstPadLinkReturn ret = gst_pad_link(src_pad, ghost_pad_);
-    if (GST_PAD_LINK_OK != ret) {
         return false;
     }
 

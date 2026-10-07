@@ -22,16 +22,7 @@ GstFlowReturn VideoPreview::onPreviewFrame(GstElement* sink, gpointer user_data)
         return GST_FLOW_OK;
     }
 
-    GstBuffer* gst_buffer = gst_sample_get_buffer(sample);
-    if (gst_buffer) {
-        GstMapInfo map;
-        if (gst_buffer_map(gst_buffer, &map, GST_MAP_READ)) {
-            self->buffer_->setPreview(map.data, map.size);
-            gst_buffer_unmap(gst_buffer, &map);
-        }
-    }
-
-    gst_sample_unref(sample);
+    self->buffer_->setPreview(sample);
     return GST_FLOW_OK;
 }
 
@@ -41,7 +32,7 @@ bool VideoPreview::create(GstDevice* device, std::shared_ptr<VideoPreviewBuffer>
         return false;
     }
 
-    auto queue = gst_element_factory_make("queue", "prev_q");
+    auto queue = gst_element_factory_make("queue", NULL);
     if (!queue) {
         return false;
     }
@@ -153,14 +144,13 @@ void VideoPreview::destroy() {
         std::unique_lock<std::mutex> lk(mutex_);
         unlink_cv_.wait(lk, [this]() {
             return !bin_;
-            });
+        });
     }
 
     capture_->removeSrcPad(src_pad_);
     capture_.reset();
     src_pad_ = 0;
 }
-
 
 GstPadProbeReturn VideoPreview::unlink_cb(GstPad* pad, GstPadProbeInfo*, gpointer user_data) {
     auto* self = static_cast<VideoPreview*>(user_data);

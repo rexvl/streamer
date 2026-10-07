@@ -293,26 +293,24 @@ int HttpServer::callback_ws_video(struct lws* wsi, enum lws_callback_reasons rea
             return -1;
         }
 
-        if (video_preview->preview_index_ == ws->sent_item_index_) {
+        if (video_preview->index() == ws->sent_item_index_) {
             break; // skip if already sent
         }
 
-        ws->sent_item_index_ = video_preview->preview_index_;
+        ws->sent_item_index_ = video_preview->index();
 
-        if (!video_preview || video_preview->data_.empty()) {
+        if (video_preview->empty()) {
             break;
         }
 
-        const auto& data = video_preview->data_;
-        const size_t size = data.size();
-        if (size > instansce->buffer_.size() - LWS_PRE) {
+        if (video_preview->size() > instansce->buffer_.size() - LWS_PRE) {
             return -1;
         }
 
-        memcpy(&instansce->buffer_[LWS_PRE], data.data(), size);
+        memcpy(&instansce->buffer_[LWS_PRE], video_preview->data(), video_preview->size());
 
-        const int written = lws_write(wsi, &instansce->buffer_[LWS_PRE], size, LWS_WRITE_BINARY);
-        if (written != size) {
+        const int written = lws_write(wsi, &instansce->buffer_[LWS_PRE], video_preview->size(), LWS_WRITE_BINARY);
+        if (written != video_preview->size()) {
             return -1;
         }
         break;

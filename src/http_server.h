@@ -54,7 +54,7 @@ class HttpServer : public PreviewUpdateListener {
                 return false;
             }
 
-            if (!video_preview_ || video_preview_->preview_index_ != video_preview->preview_index_) {
+            if (!video_preview_ || video_preview_->index() != video_preview->index()) {
                 video_preview_ = video_preview;
                 return true;
             }

@@ -99,7 +99,7 @@ bool MediaOutput::addVideo(VideoSource* video) {
     }
 
     g_object_set(vqueue_,
-        "leaky", 2,
+        "leaky", 1, // drop old buffers
         "max-size-buffers", 0,
         "max-size-bytes", 0,
         "max-size-time", 2 * GST_SECOND,

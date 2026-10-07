@@ -333,7 +333,7 @@ uint64_t ConfigManager::getDeviceIndex(const std::string& device_id) {
 }
 
 void ConfigManager::addVideoDevice(const gchar* device_id, const std::string& name, GstDevice* device) {
-    auto di = std::make_shared<VideoCaptureInfo>(name, device, preview_listener_);
+    auto di = std::make_shared<VideoCaptureInfo>(name, device, preview_listener_, previews_version_);
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
     auto device_index = ensureDeviceIndex(device_id);
@@ -351,10 +351,11 @@ void ConfigManager::addVideoDevice(const gchar* device_id, const std::string& na
     }
 
     video_devices_[device_index] = std::move(di);
+    previews_version_.fetch_add(1, std::memory_order_release);
 }
 
 void ConfigManager::addAudioDevice(const gchar* device_id, const std::string& name, GstDevice* device) {
-    auto di = std::make_shared<AudioCaptureInfo>(name, device, preview_listener_);
+    auto di = std::make_shared<AudioCaptureInfo>(name, device, preview_listener_, previews_version_);
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
     auto device_index = ensureDeviceIndex(device_id);
@@ -372,6 +373,7 @@ void ConfigManager::addAudioDevice(const gchar* device_id, const std::string& na
     }
 
     audio_devices_[device_index] = std::move(di);
+    previews_version_.fetch_add(1, std::memory_order_release);
 }
 
 void ConfigManager::removeVideoDevice(const gchar* device_id) {
@@ -394,6 +396,7 @@ void ConfigManager::removeVideoDevice(const gchar* device_id) {
         video_streams_index_.erase(vsi_it);
     }
     video_devices_.erase(device_index);
+    previews_version_.fetch_add(1, std::memory_order_release);
 }
 
 void ConfigManager::removeAudioDevice(const gchar* device_id) {
@@ -416,6 +419,7 @@ void ConfigManager::removeAudioDevice(const gchar* device_id) {
         audio_streams_index_.erase(asi_it);
     }
     audio_devices_.erase(device_index);
+    previews_version_.fetch_add(1, std::memory_order_release);
 }
 
 void ConfigManager::getVideoDevices(std::map<uint64_t, std::string>& video_devices) {
@@ -465,8 +469,16 @@ std::shared_ptr<AudioPreviewBuffer> ConfigManager::getAudioPreviewBuffer(const u
     return std::shared_ptr<AudioPreviewBuffer>();
 }
 
-void ConfigManager::getActivePreviews(std::map<GstDevice*, std::shared_ptr<VideoPreviewBuffer>>& video_previews,
-                                      std::map<GstDevice*, std::shared_ptr<AudioPreviewBuffer>>& audio_previews) {
+bool ConfigManager::getActivePreviews(std::map<GstDevice*, std::shared_ptr<VideoPreviewBuffer>>& video_previews,
+                                      std::map<GstDevice*, std::shared_ptr<AudioPreviewBuffer>>& audio_previews,
+                                      uint64_t& last_previews_version) {
+    const uint64_t current_version = previews_version_.load(std::memory_order_acquire);
+    if (current_version == last_previews_version) {
+        return false;
+    }
+
+    last_previews_version = current_version;
+
     std::shared_lock<std::shared_mutex> lock(mutex_);
 
     for (auto& it : video_devices_) {
@@ -482,4 +494,6 @@ void ConfigManager::getActivePreviews(std::map<GstDevice*, std::shared_ptr<Video
             audio_previews[it.second->device] = buffer;
         }
     }
+
+    return true;
 }

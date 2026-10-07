@@ -113,18 +113,18 @@ struct BaseCaptureInfo {
 struct VideoCaptureInfo : public BaseCaptureInfo {
     std::shared_ptr<VideoPreviewBuffer> buffer;
 
-    VideoCaptureInfo(const std::string& name, GstDevice* device, PreviewUpdateListener* listener) :
+    VideoCaptureInfo(const std::string& name, GstDevice* device, PreviewUpdateListener* listener, std::atomic<uint64_t>& previews_version) :
         BaseCaptureInfo(name, device),
-        buffer(std::make_shared<VideoPreviewBuffer>(listener)) {
+        buffer(std::make_shared<VideoPreviewBuffer>(listener, previews_version)) {
     }
 };
 
 struct AudioCaptureInfo : public BaseCaptureInfo {
     std::shared_ptr<AudioPreviewBuffer> buffer;
 
-    AudioCaptureInfo(const std::string& name, GstDevice* device, PreviewUpdateListener* listener) :
+    AudioCaptureInfo(const std::string& name, GstDevice* device, PreviewUpdateListener* listener, std::atomic<uint64_t>& previews_version) :
         BaseCaptureInfo(name, device),
-        buffer(std::make_shared<AudioPreviewBuffer>(listener)) {
+        buffer(std::make_shared<AudioPreviewBuffer>(listener, previews_version)) {
     }
 };
 
@@ -191,6 +191,8 @@ class ConfigManager {
     std::map<uint64_t, std::shared_ptr<AudioCaptureInfo>> audio_devices_;
     uint64_t next_stream_id_{0};
 
+    std::atomic<uint64_t> previews_version_{ 1 };
+
     std::unique_ptr<std::thread> thread_;
     std::atomic<bool> exit_{ false };
 
@@ -246,6 +248,7 @@ public:
     std::shared_ptr<VideoPreviewBuffer> getVideoPreviewBuffer(const uint64_t cam_id);
     std::shared_ptr<AudioPreviewBuffer> getAudioPreviewBuffer(const uint64_t cam_id);
 
-    void getActivePreviews(std::map<GstDevice*, std::shared_ptr<VideoPreviewBuffer>>& video_previews,
-                           std::map<GstDevice*, std::shared_ptr<AudioPreviewBuffer>>& audio_previews);
+    bool getActivePreviews(std::map<GstDevice*, std::shared_ptr<VideoPreviewBuffer>>& video_previews,
+                           std::map<GstDevice*, std::shared_ptr<AudioPreviewBuffer>>& audio_previews,
+                           uint64_t& last_previews_version);
 };

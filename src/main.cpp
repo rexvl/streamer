@@ -36,6 +36,7 @@ int main() {
     http_server.start();
 
     std::chrono::steady_clock::time_point last_sync = std::chrono::steady_clock::now();
+    uint64_t last_previews_version = 0;
 
     std::shared_ptr<MediaPipeline> pipeline;
 
@@ -46,6 +47,7 @@ int main() {
             if (!pipeline || !pipeline->create()) {
                 return -1;
             }
+            last_previews_version = 0;
         }
 
         if (!pipeline->ProcessMessage()) {
@@ -54,13 +56,15 @@ int main() {
         }
 
         if (!pipeline->IsPlaying()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
 
         std::map<GstDevice*, std::shared_ptr<VideoPreviewBuffer>> video_previews;
         std::map<GstDevice*, std::shared_ptr<AudioPreviewBuffer>> audio_previews;
-        ConfigManager::getInstance().getActivePreviews(video_previews, audio_previews);
-        pipeline->syncVideoPreviews(video_previews);
+        if (ConfigManager::getInstance().getActivePreviews(video_previews, audio_previews, last_previews_version)) {
+            pipeline->syncVideoPreviews(video_previews);
+        }
 
         const auto cur_time = std::chrono::steady_clock::now();
         if (last_sync + std::chrono::milliseconds(2000) < cur_time) {

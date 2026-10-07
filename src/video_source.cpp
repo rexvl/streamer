@@ -75,6 +75,11 @@ bool VideoSource::create(std::shared_ptr<MediaCapture>& capture) {
         return false;
     }
 
+    auto queue = gst_element_factory_make("queue", NULL);
+    if (!queue) {
+        return false;
+    }
+
     GstElement* videorate = gst_element_factory_make("videorate", NULL);
     if (!videorate) {
         return false;
@@ -141,13 +146,13 @@ bool VideoSource::create(std::shared_ptr<MediaCapture>& capture) {
         "async", FALSE,
         nullptr);
 
-    gst_bin_add_many(GST_BIN(video_bin_), videorate, videoscale, videoconvert, capsfilter, enc, parser, tee_, fakesink, NULL);
+    gst_bin_add_many(GST_BIN(video_bin_), queue, videorate, videoscale, videoconvert, capsfilter, enc, parser, tee_, fakesink, NULL);
 
-    if (!gst_element_link_many(videorate, videoscale, videoconvert, capsfilter, enc, parser, tee_, fakesink, NULL)) {
+    if (!gst_element_link_many(queue, videorate, videoscale, videoconvert, capsfilter, enc, parser, tee_, fakesink, NULL)) {
         return false;
     }
 
-    auto sink_pad = add_ghost_pad(video_bin_, videorate, "sink", NULL);
+    auto sink_pad = add_ghost_pad(video_bin_, queue, "sink", NULL);
     if (!sink_pad) {
         return false;
     }

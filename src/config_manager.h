@@ -4,9 +4,7 @@
 #include <set>
 #include <atomic>
 #include <shared_mutex>
-
 #include <preview_state.h>
-
 #include <gst/gst.h>
 
 enum class SourceStatus {
@@ -103,12 +101,30 @@ struct StreamSettings {
 */
 };
 
-struct DeviceInfo {
-    std::string name_;
-    GstDevice* device_;
+struct BaseCaptureInfo {
+    std::string name;
+    GstDevice* device;
 
-    DeviceInfo(const std::string& name, GstDevice* device) :
-        name_(name), device_(device) {
+    BaseCaptureInfo(const std::string& name, GstDevice* device) :
+        name(name), device(device) {
+    }
+};
+
+struct VideoCaptureInfo : public BaseCaptureInfo {
+    std::shared_ptr<VideoPreviewBuffer> buffer;
+
+    VideoCaptureInfo(const std::string& name, GstDevice* device, PreviewUpdateListener* listener) :
+        BaseCaptureInfo(name, device),
+        buffer(std::make_shared<VideoPreviewBuffer>(listener)) {
+    }
+};
+
+struct AudioCaptureInfo : public BaseCaptureInfo {
+    std::shared_ptr<AudioPreviewBuffer> buffer;
+
+    AudioCaptureInfo(const std::string& name, GstDevice* device, PreviewUpdateListener* listener) :
+        BaseCaptureInfo(name, device),
+        buffer(std::make_shared<AudioPreviewBuffer>(listener)) {
     }
 };
 
@@ -148,45 +164,46 @@ public:
     }
 };
 
+/*
 struct StreamContext {
     StreamSettings settings;
-    std::shared_ptr<PreviewState> preview;
     std::shared_ptr<StreamStatus> status;
 
     StreamContext() = default;
 
-    StreamContext(const StreamSettings& settings, PreviewUpdateListener* preview_listener) :
+    StreamContext(const StreamSettings& settings) :
         settings(settings) {
-        preview = std::make_shared<PreviewState>(preview_listener);
         status  = std::make_shared<StreamStatus>();
     }
 };
+*/
 
 class ConfigManager {
     PreviewUpdateListener* preview_listener_;
 
     std::shared_mutex mutex_;
-    std::map<std::string, StreamContext> streams_;
+    std::map<std::string, StreamSettings> streams_;
 
     std::map<GstDevice*, std::set<std::string>> video_streams_index_;
     std::map<GstDevice*, std::set<std::string>> audio_streams_index_;
 
-    std::map<uint64_t, std::shared_ptr<DeviceInfo>> video_devices_;
-    std::map<uint64_t, std::shared_ptr<DeviceInfo>> audio_devices_;
+    std::map<uint64_t, std::shared_ptr<VideoCaptureInfo>> video_devices_;
+    std::map<uint64_t, std::shared_ptr<AudioCaptureInfo>> audio_devices_;
     uint64_t next_stream_id_{0};
+
+    std::unique_ptr<std::thread> thread_;
+    std::atomic<bool> exit_{ false };
 
     uint64_t last_device_index_{ 0 };
     std::map<std::string, uint64_t> device_to_index_;
     std::map<uint64_t, std::string> index_to_device_;
 
-    uint64_t ensureDeviceIndex(const std::string& device_id);
-    uint64_t getDeviceIndex(const std::string& device_id);
     std::string getDeviceId(const uint64_t index);
 
     void addStream(std::map<std::string, std::set<std::string>>& device_streams,
                    const std::string& device_id, const std::string& stream_id);
 
-    void addStreamIndex(StreamContext& settings);
+    void addStreamIndex(StreamSettings& settings);
 
     void removeStreamIndex(const StreamSettings& settings);
 
@@ -195,35 +212,40 @@ class ConfigManager {
 
     bool isActive(StreamSettings& settings);
 
-    std::shared_ptr<StreamContext> getContext(const std::string& id);
+    uint64_t ensureDeviceIndex(const std::string& device_id);
+    uint64_t getDeviceIndex(const std::string& device_id);
 
     ConfigManager() = default;
+
+    void addVideoDevice(const gchar* device_id, const std::string& name, GstDevice* device);
+    void addAudioDevice(const gchar* device_id, const std::string& name, GstDevice* device);
+    void removeVideoDevice(const gchar* device_id);
+    void removeAudioDevice(const gchar* device_id);
 public:
     static ConfigManager& getInstance();
+    bool start();
+    void operator()();
+    void stop();
     void setPreviewListener(PreviewUpdateListener* listener);
     void load();
     void getStreams(std::map<std::string, StreamSettings>& streams);
     bool getStream(StreamSettings& stream, const std::string& id);
     bool addStream(StreamSettings& stream);
-    bool updateStream(const StreamSettings& settings);
+    bool updateStream(StreamSettings& settings);
     bool removeStream(const std::string& id);
 
     // to get enabeld streams and ouputs only
-    void getActiveStreams(std::map<std::string, StreamContext>& streams);
+    void getActiveStreams(std::map<std::string, StreamSettings>& streams);
 
-    // device api
-    void addVideoDevice(const std::string& id, const std::string& name, GstDevice* device);
-    void addAudioDevice(const std::string& id, const std::string& name, GstDevice* device);
-    void removeVideoDevice(const std::string& id);
-    void removeAudioDevice(const std::string& id);
-    void getVideoDevices(std::map<uint64_t, std::shared_ptr<DeviceInfo>>& video_devices);
-    void getAudioDevices(std::map<uint64_t, std::shared_ptr<DeviceInfo>>& audip_devices);
+    void getVideoDevices(std::map<uint64_t, std::string>& video_devices);
+    void getAudioDevices(std::map<uint64_t, std::string>& audip_devices);
+/*
     GstDevice* getVideoDevice(const std::string& id);
     GstDevice* getAudioDevice(const std::string& id);
+*/
+    std::shared_ptr<VideoPreviewBuffer> getVideoPreviewBuffer(const uint64_t cam_id);
+    std::shared_ptr<AudioPreviewBuffer> getAudioPreviewBuffer(const uint64_t cam_id);
 
-    std::shared_ptr<PreviewState> getPreviewState(const std::string& stream_id);
-
-    // status api
-    void getStreamsStatus(std::map<std::string, std::shared_ptr<StreamStatus>>& stream_status);
-    std::shared_ptr<StreamStatus> getStreamStatus(const std::string& id);
+    void getActivePreviews(std::map<GstDevice*, std::shared_ptr<VideoPreviewBuffer>>& video_previews,
+                           std::map<GstDevice*, std::shared_ptr<AudioPreviewBuffer>>& audio_previews);
 };

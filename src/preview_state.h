@@ -2,71 +2,76 @@
 #include <memory>
 #include <atomic>
 #include <vector>
-
-struct VideoPreview {
-    std::vector<uint8_t> data_;
-    uint64_t preview_index_;
-    VideoPreview(const uint8_t* buffer, const size_t buffer_size, const uint64_t preview_index) :
-        data_(buffer, buffer + buffer_size),
-        preview_index_(preview_index) {
-    }
-};
+#include <shared_mutex>
 
 class PreviewUpdateListener {
 public:
     virtual void onPreviewUpdated() = 0;
 };
 
-class PreviewState {
+struct VideoPreviewFrame {
+    std::vector<uint8_t> data_;
+    uint64_t preview_index_;
+    VideoPreviewFrame(const uint8_t* buffer, const size_t buffer_size, const uint64_t preview_index) :
+        data_(buffer, buffer + buffer_size),
+        preview_index_(preview_index) {
+    }
+};
+
+class BasePreviewBuffer {
     PreviewUpdateListener* listener_;
-    std::atomic<uint32_t> num_video_clients{ 0 };
-    std::shared_ptr<const VideoPreview> preview_;
-    std::atomic<uint32_t> num_audio_clients{ 0 };
-    std::atomic<double> audio_level_{ 0.0 };
+    std::atomic<uint32_t> num_clients_{ 0 };
+
 public:
-    PreviewState(PreviewUpdateListener* listener) :
+    BasePreviewBuffer(PreviewUpdateListener* listener) :
         listener_(listener) {
     }
 
-    void addVideoClient() {
-        num_video_clients.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    void removeVideoClient() {
-        num_video_clients.fetch_sub(1, std::memory_order_relaxed);
-    }
-
-    bool isVideoPreviewEnabled() const {
-        return num_video_clients.load(std::memory_order_relaxed) != 0;
-    }
-
-    void addAudioClient() {
-        num_audio_clients.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    void removeAudioClient() {
-        num_audio_clients.fetch_sub(1, std::memory_order_relaxed);
-    }
-
-    bool isAudioPreviewEnabled() const {
-        return num_audio_clients.load(std::memory_order_relaxed) != 0;
-    }
-
-    void setPreview(std::shared_ptr<const VideoPreview> preview) {
-        std::atomic_store_explicit(&preview_, std::move(preview), std::memory_order_release);
+    void notifyPreviewUpdate() {
         listener_->onPreviewUpdated();
     }
 
-    std::shared_ptr<const VideoPreview> getPreview() const {
-        return std::atomic_load_explicit(&preview_, std::memory_order_acquire);
+    void addClient() {
+        num_clients_.fetch_add(1, std::memory_order_relaxed);
     }
 
-    double getAudioLevel() const {
-        return audio_level_.load(std::memory_order_relaxed);
+    void removeClient() {
+        num_clients_.fetch_sub(1, std::memory_order_relaxed);
     }
 
-    void setAudioLevel(double level) {
-        audio_level_.store(level, std::memory_order_relaxed);
-        listener_->onPreviewUpdated();
+    bool isPreviewEnabled() const {
+        return num_clients_.load(std::memory_order_relaxed) != 0;
+    }
+};
+
+class VideoPreviewBuffer : public BasePreviewBuffer {
+    mutable std::shared_mutex mutex_;
+    std::shared_ptr<const VideoPreviewFrame> preview_;
+    uint64_t preview_frame_index_{ 0 };
+public:
+    VideoPreviewBuffer(PreviewUpdateListener* listener) :
+        BasePreviewBuffer(listener) {
+    }
+
+    void setPreview(const uint8_t* buffer, const size_t buffer_size) {
+        auto preview = std::make_shared<VideoPreviewFrame>(buffer, buffer_size, ++preview_frame_index_);
+
+        std::unique_lock<std::shared_mutex> write_lock(mutex_);
+        preview_ = preview;
+        write_lock.unlock();
+
+        notifyPreviewUpdate();
+    }
+
+    std::shared_ptr<const VideoPreviewFrame> getPreview() const {
+        std::shared_lock<std::shared_mutex> read_lock(mutex_);
+        return preview_;
+    }
+};
+
+class AudioPreviewBuffer : public BasePreviewBuffer {
+public:
+    AudioPreviewBuffer(PreviewUpdateListener* listener) :
+        BasePreviewBuffer(listener) {
     }
 };

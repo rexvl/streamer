@@ -84,7 +84,7 @@ int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                 send_http_response(wsi, json_to_string(settings), "application/json");
                 return 0;
             }
-
+/*
             if (path == "/status") {
                 std::map<std::string, std::shared_ptr<StreamStatus>> streams_status;
                 ConfigManager::getInstance().getStreamsStatus(streams_status);
@@ -102,16 +102,16 @@ int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                 send_http_response(wsi, json_to_string(status), "application/json");
                 return 0;
             }
-
+*/
             if (path == "/devices/video") {
-                std::map<uint64_t, std::shared_ptr<DeviceInfo>> video_devices;
+                std::map<uint64_t, std::string> video_devices;
                 ConfigManager::getInstance().getVideoDevices(video_devices);
                 send_http_response(wsi, json_to_string(video_devices), "application/json");
                 return 0;
             }
 
             if (path == "/devices/audio") {
-                std::map<uint64_t, std::shared_ptr<DeviceInfo>> audio_devices;
+                std::map<uint64_t, std::string> audio_devices;
                 ConfigManager::getInstance().getAudioDevices(audio_devices);
                 send_http_response(wsi, json_to_string(audio_devices), "application/json");
                 return 0;
@@ -241,6 +241,25 @@ int HttpServer::callback_http(struct lws* wsi, enum lws_callback_reasons reason,
     return 0;
 }
 
+uint64_t parse_url(struct lws* wsi, const std::string& base_url) {
+    char buf[256];
+    if (!lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_GET_URI)) {
+        return -1;
+    }
+
+    const auto path = std::string(buf);
+    if (path.rfind(base_url, 0) != 0) {
+        return -1;
+    }
+
+    const auto id_s = path.substr(base_url.length());
+    if (id_s.empty()) {
+        return -1;
+    }
+
+    return std::stoull(id_s);
+}
+
 int HttpServer::callback_ws_video(struct lws* wsi, enum lws_callback_reasons reason, void* user, void* in, size_t len) {
     auto instansce = static_cast<HttpServer*>(lws_get_protocol(wsi)->user);
     if (!instansce) {
@@ -249,18 +268,8 @@ int HttpServer::callback_ws_video(struct lws* wsi, enum lws_callback_reasons rea
 
     switch (reason) {
     case LWS_CALLBACK_ESTABLISHED: {
-        char buf[256];
-        if (!lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_GET_URI)) {
-            return -1;
-        }
-
-        const auto path = std::string(buf);
-        if (path.rfind("/ws-video/", 0) != 0) {
-            return -1;
-        }
-
-        const auto id = path.substr(strlen("/ws-video/"));
-        if (id.empty()) {
+        const int64_t id = parse_url(wsi, "/ws-video/");
+        if (id <= 0) {
             return -1;
         }
 
@@ -326,18 +335,12 @@ int HttpServer::callback_ws_audio(struct lws* wsi, enum lws_callback_reasons rea
 
     switch (reason) {
     case LWS_CALLBACK_ESTABLISHED: {
-        char buf[256];
-        if (!lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_GET_URI)) {
+        const int64_t id = parse_url(wsi, "/ws-audio/");
+        if (id <= 0) {
             return -1;
         }
 
-        const auto path = std::string(buf);
-        if (path.rfind("/ws-audio/", 0) != 0) {
-            return -1;
-        }
-
-        const auto id = path.substr(strlen("/ws-audio/"));
-        auto preview = ConfigManager::getInstance().getPreviewState(id);
+        auto preview = ConfigManager::getInstance().getAudioPreviewBuffer(id);
         if (!preview) {
             return -1;
         }
@@ -458,19 +461,16 @@ void HttpServer::onPreviewUpdated() {
     }
 }
 
-bool HttpServer::addVideoPreviewClient(struct lws* wsi, const std::string& stream_id) {
-    auto preview_state = ConfigManager::getInstance().getPreviewState(stream_id);
-    if (!preview_state) {
+bool HttpServer::addVideoPreviewClient(struct lws* wsi, const uint64_t id) {
+    auto buffer = ConfigManager::getInstance().getVideoPreviewBuffer(id);
+    if (!buffer) {
         return false;
     }
 
-    ws_video_clients_.emplace(wsi, new VideoPreviewWebsocket(preview_state));
+    ws_video_clients_.emplace(wsi, new VideoPreviewWebsocket(buffer));
     return true;
 }
 
 void HttpServer::removeVideoPreviewClient(struct lws* wsi) {
-    auto it = ws_video_clients_.find(wsi);
-    if (it != ws_video_clients_.end()) {
-        ws_video_clients_.erase(it);
-    }
+    ws_video_clients_.erase(wsi);
 }

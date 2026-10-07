@@ -11,11 +11,9 @@
 #include <cstdio>
 #include <deque>
 
-MediaStream::MediaStream(MediaPipeline* pipeline,
-                         const std::shared_ptr<PreviewState>& preview,
-                         const std::shared_ptr<StreamStatus>& status) :
-    pipeline_(pipeline), preview_(preview), status_(status) {
-    printf("MediaStream::MediaStream");
+MediaStream::MediaStream(MediaPipeline* pipeline) :
+    pipeline_(pipeline) {
+    printf("MediaStream::MediaStream\n");
 }
 
 bool MediaStream::create(const StreamSettings& settings) {
@@ -50,7 +48,7 @@ bool MediaStream::addVideo(const VideoSettings& settings) {
         return false;
     }
 
-    auto video_capture = pipeline_->getVideoCapture(settings.device);
+    auto video_capture = pipeline_->ensureVideoCapture(settings.device);
     if (!video_capture) {
         return false;
     }

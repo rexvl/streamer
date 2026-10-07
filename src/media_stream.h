@@ -15,8 +15,6 @@ struct MediaOutput;
 
 struct MediaStream {
     MediaPipeline* pipeline_;
-    std::shared_ptr<PreviewState> preview_;
-    std::shared_ptr<StreamStatus> status_;
     GstElement* bin_{nullptr};
     GstBus *bus{nullptr};
     std::unique_ptr<VideoSource> video;
@@ -25,9 +23,7 @@ struct MediaStream {
     bool playing_{ false };
     int inactivity_count_{ 0 };
 
-    MediaStream(MediaPipeline* pipeline,
-                const std::shared_ptr<PreviewState>& preview,
-                const std::shared_ptr<StreamStatus>& status);
+    MediaStream(MediaPipeline* pipeline);
     ~MediaStream();
 
     bool create(const StreamSettings& settings);

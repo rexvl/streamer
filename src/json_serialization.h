@@ -99,6 +99,21 @@ void from_json(const nlohmann::json& j, std::list<StreamSettings>& streams)
 }
 
 inline
+void from_json(const nlohmann::json& j, std::map<std::string, StreamSettings>& streams)
+{
+    streams.clear();
+
+    uint32_t stream_id = 0;
+    for (const auto& item : j)
+    {
+        StreamSettings stream;
+        item.get_to(stream);
+        stream.id = std::to_string(stream_id++);
+        streams[stream.id] = stream;
+    }
+}
+
+inline
 void to_json(nlohmann::json& j, const VideoSettings::Codec& c) {
     if (c == VideoSettings::Codec::x264enc)
         j = "x264enc";
@@ -211,22 +226,22 @@ inline void to_json(nlohmann::json& j, const std::map<std::string, StreamSetting
 }
 
 inline
-void to_json(nlohmann::json& j, const DeviceInfo& s) {
+void to_json(nlohmann::json& j, const BaseCaptureInfo& s) {
     j = nlohmann::json{
-        { "name", s.name_}
+        { "name", s.name}
     };
 }
 
 inline
-void to_json(nlohmann::json& j, const std::map<uint64_t, std::shared_ptr<DeviceInfo>>& devices) {
+void to_json(nlohmann::json& j, const std::map<uint64_t, std::string>& devices) {
     // Return devices as an array of objects { "id": <device_id>, "name": <display_name> }
     // so web UI can display human-readable names while keeping ids.
     j = nlohmann::json::array();
 
-    for (const auto& [ device_index, device ] : devices) {
+    for (const auto& [ index, name ] : devices) {
         nlohmann::json di;
-        di["id"] = device_index;
-        di["name"] = device->name_;
+        di["id"] = index;
+        di["name"] = name;
         j.push_back(di);
     }
 }

@@ -1,28 +1,31 @@
 #pragma once
+
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <gst/gst.h>
 
-#include "config_manager.h"
+#include <config_manager.h>
+#include <media_capture.h>
+#include <media_pipeline.h>
 
 class AudioSource {
-    GstElement* pipeline_;
+    GstElement* stream_bin_;
     AudioSettings settings_;
     GstElement* audio_bin_{ nullptr };
-    GstElement* audio_tee_{ nullptr };
-    GstElement* fakesink_{ nullptr };
-    std::atomic<uint32_t> frame_count_{ 0 };
-    GstPad* source_ghost_pad_{ nullptr };
-    gulong source_probe_id_{ 0 };
+    GstElement* tee_{ nullptr };
+    std::shared_ptr<MediaCapture> capture_;
+    GstPad* ghost_pad_{ nullptr };
+    GstPad* src_pad_{ nullptr };
 
-    static GstPadProbeReturn buffer_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
-    static GstPadProbeReturn capture_pad_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
+    void destroy();
+    static GstElement* createEncoder(const AudioSettings& settings);
 public:
-    AudioSource(GstElement* p, const AudioSettings& settings);
+    AudioSource(GstElement* stream_bin, const AudioSettings& settings);
     ~AudioSource();
-    bool create();
+    bool create(std::shared_ptr<MediaCapture>& capture);
     bool update(const AudioSettings& settings);
-    void updateStats(std::shared_ptr<StreamStatus>& stats);
-    GstElement* get_tee();
-    bool operator==(const GstElement* other) const;
+
+    GstPad* getNextSrcPad();
+    void removeSrcPad(GstPad* src_pad);
 };

@@ -125,12 +125,10 @@ target_link_directories(streamer PRIVATE ${GST_ROOT}/lib)
 target_link_libraries(streamer PRIVATE 
     nlohmann_json::nlohmann_json
     gstreamer-1.0
+    gstapp-1.0
     gobject-2.0
     glib-2.0
     ws2_32
-    # Add optional sub-libraries here as needed:
-    # gstapp-1.0
-    # gstvideo-1.0
 )
 
 #add_custom_command(TARGET streamer POST_BUILD

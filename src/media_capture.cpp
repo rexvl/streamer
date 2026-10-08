@@ -77,9 +77,12 @@ GstPad* MediaCapture::getNextSrcPad() {
     }
 
     GstPad* ghost_pad = gst_ghost_pad_new(NULL, src_pad);
+    gst_object_unref(src_pad);
     if (!ghost_pad) {
         return nullptr;
     }
+
+    gst_pad_set_active(ghost_pad, TRUE);
 
     if (!gst_element_add_pad(bin_, ghost_pad)) {
         return nullptr;

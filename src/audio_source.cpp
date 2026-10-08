@@ -1,94 +1,56 @@
 #include "audio_source.h"
 
+#include <iostream>
 #include <gst/gst.h>
-#include <gst/gstdeviceprovider.h>
+#include <media_utils.h>
 
-#include <atomic>
-
-AudioSource::AudioSource(GstElement* p, const AudioSettings& as) :
-    pipeline_(p), settings_(as) {
+AudioSource::AudioSource(GstElement* stream_bin, const AudioSettings& settings) :
+    stream_bin_(stream_bin),
+    settings_(settings) {
+    printf("AudioSource::AudioSource\n");
 }
 
 AudioSource::~AudioSource() {
-    // Remove pad probe on our source ghost pad so callbacks won't reference this
-    if (source_ghost_pad_ && source_probe_id_ > 0) {
-        gst_pad_remove_probe(source_ghost_pad_, source_probe_id_);
-        source_probe_id_ = 0;
-    }
-
-    // Do not remove/unref elements that were added to the global pipeline here.
-    // Just set their state to NULL and clear local pointers so pipeline owns final cleanup.
-    if (audio_bin_) {
-        gst_element_set_state(audio_bin_, GST_STATE_NULL);
-        audio_bin_ = nullptr;
-    }
-
-    if (audio_tee_) {
-        gst_element_set_state(audio_tee_, GST_STATE_NULL);
-        audio_tee_ = nullptr;
-    }
-
-    if (fakesink_) {
-        gst_element_set_state(fakesink_, GST_STATE_NULL);
-        fakesink_ = nullptr;
-    }
+    destroy();
 }
 
-GstPadProbeReturn AudioSource::buffer_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
-    auto self = static_cast<AudioSource*>(user_data);
-    if (self) {
-        self->frame_count_.fetch_add(1, std::memory_order_relaxed);
-    }
-    return GST_PAD_PROBE_OK;
-}
+GstElement* AudioSource::createEncoder(const AudioSettings& settings) {
+    GstElement* enc = nullptr;
 
-GstPadProbeReturn AudioSource::capture_pad_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
-    //auto self = static_cast<VideoSource*>(user_data);
-
-    GstEvent* event = GST_PAD_PROBE_INFO_EVENT(info);
-    if (!event) {
-        return GST_PAD_PROBE_OK;
-    }
-
-    if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS) {
-        GstCaps* caps = NULL;
-
-        gst_event_parse_caps(event, &caps);
-
-        if (caps) {
-            gchar* caps_str = gst_caps_to_string(caps);
-
-            g_print("[%s] CAPS: %s\n",
-                GST_PAD_NAME(pad),
-                caps_str);
-
-            g_free(caps_str);
+    switch (settings.codec) {
+        case AudioSettings::Codec::AAC:
+        default:
+        {
+            enc = gst_element_factory_make("voaacenc", NULL);
+            if (enc) {
+                g_object_set(enc,
+                    "bitrate", settings.bitrate * 1000,
+                    NULL);
+            }
+            break;
         }
     }
 
-    return GST_PAD_PROBE_OK;
+    return enc;
 }
 
-bool AudioSource::create() {
-    if (!settings_.device) {
-        return false;
-    }
-
-    audio_bin_ = gst_bin_new(NULL);
+bool AudioSource::create(std::shared_ptr<MediaCapture>& capture) {
+    audio_bin_ = createChildBin(stream_bin_);
     if (!audio_bin_) {
         return false;
     }
 
-    if (!gst_bin_add(GST_BIN(pipeline_), audio_bin_)) {
-        gst_object_unref(audio_bin_);
-        audio_bin_ = nullptr;
+    auto queue = gst_element_factory_make("queue", NULL);
+    if (!queue) {
         return false;
     }
 
-    GstElement* capture = gst_device_create_element(settings_.device, NULL);
-    if (!capture) {
-        return false;
-    }
+    g_object_set(queue,
+        "leaky", 2,
+        "max-size-buffers", 20,
+        "max-size-time", (guint64)0,
+        "max-size-bytes", (guint)0,
+        nullptr);
 
     GstElement* audioconvert = gst_element_factory_make("audioconvert", NULL);
     if (!audioconvert) {
@@ -107,6 +69,8 @@ bool AudioSource::create() {
 
     GstCaps* caps = gst_caps_new_simple(
         "audio/x-raw",
+        "format", G_TYPE_STRING, "S16LE",
+        "layout", G_TYPE_STRING, "interleaved",
         "rate", G_TYPE_INT, settings_.sampleRate,
         "channels", G_TYPE_INT, settings_.channel_count,
         nullptr
@@ -117,105 +81,135 @@ bool AudioSource::create() {
     }
 
     g_object_set(capsfilter, "caps", caps, nullptr);
+    gst_caps_unref(caps);
 
-    GstElement* level = gst_element_factory_make("level", NULL);
-    if (!level) {
-        return false;
-    }
-
-    g_object_set(level,
-        "interval", (gint64)100 * GST_MSECOND,
-        "post-messages", TRUE,
-        NULL);
-
-    GstElement* enc = gst_element_factory_make("voaacenc", NULL);
+    GstElement* enc = createEncoder(settings_);
     if (!enc) {
         return false;
     }
-
-    g_object_set(enc,
-        "bitrate", 128000,
-        NULL);
 
     GstElement* parser = gst_element_factory_make("aacparse", NULL);
     if (!parser) {
         return false;
     }
 
-    gst_bin_add_many(GST_BIN(audio_bin_), capture, audioresample, audioconvert, capsfilter, level, enc, parser, NULL);
-    if (!gst_element_link_many(capture, audioresample, audioconvert, capsfilter, level, enc, parser, NULL)) {
+    tee_ = gst_element_factory_make("tee", NULL);
+    if (!tee_) {
         return false;
     }
 
-    GstPad* capture_pad = gst_element_get_static_pad(capture, "src");
-    if (!capture_pad) {
+    // Add dummy sink to avoid getting EOS on output disconnect
+    auto fakesink = gst_element_factory_make("fakesink", NULL);
+    if (!fakesink) {
         return false;
     }
 
-    gst_pad_add_probe(capture_pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, capture_pad_probe, this, NULL);
+    g_object_set(fakesink,
+        "sync", FALSE,
+        "async", FALSE,
+        nullptr);
 
-    GstPad* source_pad = gst_element_get_static_pad(parser, "src");
-    if (!source_pad) {
+    gst_bin_add_many(GST_BIN(audio_bin_), queue, audioconvert, audioresample, capsfilter, enc, parser, tee_, fakesink, NULL);
+
+    if (!gst_element_link_many(queue, audioconvert, audioresample, capsfilter, enc, parser, tee_, fakesink, NULL)) {
         return false;
     }
 
-    source_ghost_pad_ = gst_ghost_pad_new("src", source_pad);
-    gst_object_unref(source_pad);
-    if (!source_ghost_pad_) {
+    auto sink_pad = add_ghost_pad(audio_bin_, queue, "sink", NULL);
+    if (!sink_pad) {
         return false;
     }
 
-    if (!gst_element_add_pad(audio_bin_, source_ghost_pad_)) {
-        gst_object_unref(source_ghost_pad_);
-        source_ghost_pad_ = nullptr;
+    // Link encoder's sink to stream's sink
+    ghost_pad_ = gst_ghost_pad_new(NULL, sink_pad);
+    if (!ghost_pad_) {
         return false;
     }
 
-    source_probe_id_ = gst_pad_add_probe(source_ghost_pad_,
-        GST_PAD_PROBE_TYPE_BUFFER,
-        buffer_probe,
-        this,
-        NULL);
-
-    audio_tee_ = gst_element_factory_make("tee", NULL);
-    if (!audio_tee_) {
+    if (!gst_element_add_pad(stream_bin_, ghost_pad_)) {
         return false;
     }
 
-    if (!gst_bin_add(GST_BIN(pipeline_), audio_tee_)) {
+    if (!gst_element_sync_state_with_parent(audio_bin_)) {
+        printf("AudioSource::create: failed to sync video_bin_\n");
         return false;
     }
 
-    // add dummy sink to avoid getting EOS on output issue
-    fakesink_ = gst_element_factory_make("fakesink", NULL);
-
-    g_object_set(fakesink_,
-                 "sync", FALSE,
-                 "async", FALSE,
-                 nullptr);
-
-    if (!gst_bin_add(GST_BIN(pipeline_), fakesink_)) {
+    auto src_pad = capture->linkNextSrcPad(ghost_pad_);
+    if (!src_pad) {
         return false;
     }
 
-    return gst_element_link_many(audio_bin_, audio_tee_, fakesink_, NULL);
+    capture_ = capture;
+    src_pad_ = src_pad;
+    return true;
+}
+
+GstPad* AudioSource::getNextSrcPad() {
+    auto src_pad = gst_element_request_pad_simple(tee_, "src_%u");
+    if (!src_pad) {
+        return nullptr;
+    }
+
+    GstPad* ghost_pad = gst_ghost_pad_new(NULL, src_pad);
+    if (!ghost_pad) {
+        gst_element_release_request_pad(tee_, src_pad);
+        gst_object_unref(src_pad);
+        return nullptr;
+    }
+
+    if (!gst_element_add_pad(audio_bin_, ghost_pad)) {
+        gst_object_unref(ghost_pad);
+        gst_element_release_request_pad(tee_, src_pad);
+        gst_object_unref(src_pad);
+        return nullptr;
+    }
+
+    return ghost_pad;
+}
+
+void AudioSource::removeSrcPad(GstPad* ghost_pad) {
+    auto src_pad = gst_ghost_pad_get_target(GST_GHOST_PAD(ghost_pad));
+    gst_element_remove_pad(audio_bin_, ghost_pad);
+    gst_element_release_request_pad(tee_, src_pad);
+    gst_object_unref(src_pad);
 }
 
 bool AudioSource::update(const AudioSettings& settings) {
-    return settings_ == settings;
-}
+    bool ret = (settings_ == settings);
 
-void AudioSource::updateStats(std::shared_ptr<StreamStatus>& stats) {
-    uint32_t frame_count = frame_count_.exchange(0, std::memory_order_relaxed);
-    if (frame_count > 0) {
-        stats->setAudioStatus(SourceStatus::kSuccess);
+    if (!ret) {
+        printf("!!!audio settings changed!!!\n");
     }
+
+    return ret;
 }
 
-GstElement* AudioSource::get_tee() {
-    return audio_tee_;
-}
+void AudioSource::destroy() {
+    if (!audio_bin_) {
+        return;
+    }
 
-bool AudioSource::operator==(const GstElement* other) const {
-    return audio_bin_ == other;
+    // 1. Unlink incoming pad from capture stream
+    if (src_pad_ && ghost_pad_) {
+        gst_pad_unlink(src_pad_, ghost_pad_);
+    }
+
+    // 2. Return request pad back to MediaCapture tee
+    if (capture_ && src_pad_) {
+        capture_->removeSrcPad(src_pad_);
+        src_pad_ = nullptr;
+        capture_.reset();
+    }
+
+    // 3. Remove ghost pad from stream_bin_
+    if (ghost_pad_) {
+        gst_element_remove_pad(stream_bin_, ghost_pad_);
+        ghost_pad_ = nullptr;
+    }
+
+    // 4. Stop and remove encoder bin from stream_bin_
+    gst_element_set_state(audio_bin_, GST_STATE_NULL);
+    gst_bin_remove(GST_BIN(stream_bin_), audio_bin_);
+    audio_bin_ = nullptr;
 }

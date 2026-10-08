@@ -24,23 +24,28 @@ bool MediaStream::create(const StreamSettings& settings) {
         return false;
     }
 
+    if (!gst_element_sync_state_with_parent(bin_)) {
+        printf("MediaStream::create: failed to sync bin_ state\n");
+        return false;
+    }
+
     if (settings.video && settings.video->device) {
         if (!addVideo(*settings.video)) {
             return false;
         }
     }
-/*
+
     if (settings.audio && settings.audio->device) {
         if (!addAudio(*settings.audio)) {
             return false;
         }
     }
-*/
+
     if (!syncOutputs(settings.outputs)) {
         return false;
     }
 
-    return gst_element_sync_state_with_parent(bin_);
+    return true;
 }
 
 bool MediaStream::addVideo(const VideoSettings& settings) {
@@ -62,21 +67,23 @@ bool MediaStream::addVideo(const VideoSettings& settings) {
     return true;
 }
 
-/*
 bool MediaStream::addAudio(const AudioSettings& settings) {
     if (audio || !outputs.empty() || !settings.device) {
         return false;
     }
 
-    audio = std::make_unique<AudioSource>(pipeline, settings);
-    if (!audio->create()) {
+    auto audio_capture = pipeline_->ensureAudioCapture(settings.device);
+    if (!audio_capture) {
         return false;
     }
 
-    status_->setAudioStatus(SourceStatus::kSuccess);
+    audio = std::make_unique<AudioSource>(bin_, settings);
+    if (!audio->create(audio_capture)) {
+        return false;
+    }
+
     return true;
 }
-*/
 
 bool MediaStream::addOutput(const std::string& id, const OutputSettings& settings) {
     auto output = std::make_unique<MediaOutput>(bin_, settings);
@@ -89,13 +96,12 @@ bool MediaStream::addOutput(const std::string& id, const OutputSettings& setting
             return false;
         }
     }
-/*
+
     if (audio) {
-        if (!output->addAudio(audio->get_tee())) {
+        if (!output->addAudio(audio.get())) {
             return false;
         }
     }
-*/
     if (!output->syncState()) {
         return false;
     }
@@ -163,26 +169,24 @@ bool MediaStream::update(const StreamSettings& settings) {
             return false;
         }
     }
-/*
-    if (settings.audio && settings.audio->device) {
-        if (!audio) {
-            // audio settings added
-            if (!addAudio(*settings.audio)) {
-                return false;
-            }
-        } else if (!audio->update(*settings.audio)) {
-            // audio settings changed
-            if (!removeAudio()) {
-                return false;
-            }
+if (settings.audio && settings.audio->device) {
+    if (!audio) {
+        // Audio settings added
+        if (!addAudio(*settings.audio)) {
+            return false;
         }
-    } else if (audio) {
-        // audio settings removed
+    } else if (!audio->update(*settings.audio)) {
+        // Audio settings changed
         if (!removeAudio()) {
             return false;
         }
     }
-*/
+} else if (audio) {
+    // Audio settings removed
+    if (!removeAudio()) {
+        return false;
+    }
+}
     return syncOutputs(settings.outputs);
 }
 

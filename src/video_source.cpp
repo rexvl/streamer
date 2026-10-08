@@ -58,8 +58,6 @@ GstElement* VideoSource::createEncoder(const VideoSettings& settings) {
                     "bitrate", settings.bitrate,
                     "key-int-max", keyint_frames,
                     "pass", 0,
-                    "speed-preset", "ultrafast",
-                    "tune", "zerolatency",
                     NULL);
             }
             break;
@@ -79,6 +77,13 @@ bool VideoSource::create(std::shared_ptr<MediaCapture>& capture) {
     if (!queue) {
         return false;
     }
+
+    g_object_set(queue,
+        "leaky", 2,
+        "max-size-buffers", 20,
+        "max-size-time", (guint64)0,
+        "max-size-bytes", (guint)0,
+        nullptr);
 
     GstElement* videorate = gst_element_factory_make("videorate", NULL);
     if (!videorate) {
@@ -167,6 +172,11 @@ bool VideoSource::create(std::shared_ptr<MediaCapture>& capture) {
         return false;
     }
 
+    if (!gst_element_sync_state_with_parent(video_bin_)) {
+        printf("VideoSource::create: failed to sync video_bin_\n");
+        return false;
+    }
+
     auto src_pad = capture->linkNextSrcPad(ghost_pad_);
     if (!src_pad) {
         return false;
@@ -217,40 +227,26 @@ void VideoSource::destroy() {
         return;
     }
 
-   auto probe_id = gst_pad_add_probe(
-        src_pad_,
-        GST_PAD_PROBE_TYPE_IDLE,
-        unlink_cb, this, NULL);
-
-    if (probe_id) {
-        std::unique_lock<std::mutex> lk(mutex_);
-        unlink_cv_.wait(lk, [this]() {
-            return !video_bin_;
-        });
+    // 1. Unlink incoming pad from capture stream
+    if (src_pad_ && ghost_pad_) {
+        gst_pad_unlink(src_pad_, ghost_pad_);
     }
 
-    capture_->removeSrcPad(src_pad_);
-    capture_.reset();
-    src_pad_ = 0;
-}
+    // 2. Return request pad back to MediaCapture tee
+    if (capture_ && src_pad_) {
+        capture_->removeSrcPad(src_pad_);
+        src_pad_ = nullptr;
+        capture_.reset();
+    }
 
+    // 3. Remove ghost pad from stream_bin_
+    if (ghost_pad_) {
+        gst_element_remove_pad(stream_bin_, ghost_pad_);
+        ghost_pad_ = nullptr;
+    }
 
-GstPadProbeReturn VideoSource::unlink_cb(GstPad* pad, GstPadProbeInfo*, gpointer user_data) {
-    auto* self = static_cast<VideoSource*>(user_data);
-    self->unlink();
-    return GST_PAD_PROBE_REMOVE;
-}
-
-void VideoSource::unlink() {
-    auto ret = gst_pad_unlink(src_pad_, ghost_pad_);
-
+    // 4. Stop and remove encoder bin from stream_bin_
     gst_element_set_state(video_bin_, GST_STATE_NULL);
     gst_bin_remove(GST_BIN(stream_bin_), video_bin_);
-
-    {
-        std::scoped_lock<std::mutex> lk(mutex_);
-        video_bin_ = nullptr;
-    }
-
-    unlink_cv_.notify_one();
+    video_bin_ = nullptr;
 }

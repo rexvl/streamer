@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <media_stream.h>
 #include <video_source.h>
+#include <audio_source.h>
 #include <media_utils.h>
 
 MediaOutput::MediaOutput(GstElement* stream_bin, const OutputSettings& s) :
@@ -15,9 +16,10 @@ MediaOutput::MediaOutput(GstElement* stream_bin, const OutputSettings& s) :
 MediaOutput::~MediaOutput() {
     printf("MediaOutput::~MediaOutput: id=%s\n", settings_.id.c_str());
 
-    if (video_tee_pad_) {
+    auto pad_to_probe = video_tee_pad_ ? video_tee_pad_ : audio_tee_pad_;
+    if (pad_to_probe) {
         auto probe_id = gst_pad_add_probe(
-            video_tee_pad_,
+            pad_to_probe,
             GST_PAD_PROBE_TYPE_IDLE,
                 [](GstPad* pad, GstPadProbeInfo* info, gpointer user_data) -> GstPadProbeReturn {
                 auto* self = static_cast<MediaOutput*>(user_data);
@@ -32,15 +34,29 @@ MediaOutput::~MediaOutput() {
                 return !output_bin_;
             });
         }
+    } else if (output_bin_) {
+        unlink();
     }
 
     if (video_) {
         video_->removeSrcPad(video_tee_pad_);
+        video_tee_pad_ = nullptr;
+    }
+
+    if (audio_) {
+        audio_->removeSrcPad(audio_tee_pad_);
+        audio_tee_pad_ = nullptr;
     }
 }
 
 void MediaOutput::unlink() {
-    auto ret = gst_pad_unlink(video_tee_pad_, sink_ghost_);
+    if (video_tee_pad_ && sink_ghost_) {
+        gst_pad_unlink(video_tee_pad_, sink_ghost_);
+    }
+
+    if (audio_tee_pad_ && audio_sink_ghost_) {
+        gst_pad_unlink(audio_tee_pad_, audio_sink_ghost_);
+    }
 
     gst_element_set_state(output_bin_, GST_STATE_NULL);
     gst_bin_remove(GST_BIN(stream_bin_), output_bin_);
@@ -135,67 +151,58 @@ bool MediaOutput::addVideo(VideoSource* video) {
     return true;
 }
 
-/*
-bool MediaOutput::addAudio(GstElement* audio_tee) {
-    GstElement* aqueue = gst_element_factory_make("queue", NULL);
-    if (!aqueue) {
+bool MediaOutput::addAudio(AudioSource* audio) {
+    aqueue_ = gst_element_factory_make("queue", NULL);
+    if (!aqueue_) {
         return false;
     }
 
-    g_object_set(aqueue,
-        "leaky", 2,
+    g_object_set(aqueue_,
+        "leaky", 1, // drop old buffers
         "max-size-buffers", 0,
         "max-size-bytes", 0,
         "max-size-time", 2 * GST_SECOND,
         NULL);
 
-    // Queue is returned inside output_bin_ to ensure the entire branch resets cleanly together
-    if (!gst_bin_add(GST_BIN(output_bin_), aqueue)) {
+    if (!gst_bin_add(GST_BIN(output_bin_), aqueue_)) {
         return false;
     }
 
-    g_signal_connect(aqueue, "overrun", G_CALLBACK(on_aqueue_overrun), this);
+    auto mux_audio_pad = gst_element_request_pad_simple(mux_, "audio");
+    if (!mux_audio_pad) {
+        return false;
+    }
+
+    auto aqueue_src_pad = gst_element_get_static_pad(aqueue_, "src");
+    GstPadLinkReturn ret = gst_pad_link(aqueue_src_pad, mux_audio_pad);
+    gst_object_unref(aqueue_src_pad);
+    gst_object_unref(mux_audio_pad);
+    if (ret != GST_PAD_LINK_OK) {
+        printf("failed to connect audio_queue to mux: %d\n", ret);
+        return false;
+    }
 
     if (!audio_tee_pad_) {
-        audio_tee_pad_ = gst_element_request_pad_simple(audio_tee, "src_%u");
+        audio_tee_pad_ = audio->getNextSrcPad();
         if (!audio_tee_pad_) {
             return false;
         }
     }
 
-    // Create a boundary ghost pad targeting the internal queue sink pad
-    GstPad* aqueue_sink_pad = gst_element_get_static_pad(aqueue, "sink");
-    GstPad* sink_ghost = gst_ghost_pad_new("asink", aqueue_sink_pad);
-    gst_object_unref(aqueue_sink_pad);
-    if (!sink_ghost) {
+    audio_sink_ghost_ = add_ghost_pad(output_bin_, aqueue_, "sink", "asink");
+    if (!audio_sink_ghost_) {
         return false;
     }
 
-    if (!gst_element_add_pad(output_bin_, sink_ghost)) {
-        return false;
-    }
-
-    // Link the stable source tee pad directly to the output_bin boundary ghost pad
-    GstPadLinkReturn ret = gst_pad_link(audio_tee_pad_, sink_ghost);
+    ret = gst_pad_link(audio_tee_pad_, audio_sink_ghost_);
     if (ret != GST_PAD_LINK_OK) {
-        printf("failed to connect audio_tee to output_bin ghost pad\n");
+        printf("failed to connect audio_tee to audio_queue\n");
         return false;
     }
 
-    // Link internal queue src pad to internal flvmux pad
-    GstPad* aqueue_src_pad = gst_element_get_static_pad(aqueue, "src");
-    auto mux_audio_pad = gst_element_request_pad_simple(mux_, "audio");
-    ret = gst_pad_link(aqueue_src_pad, mux_audio_pad);
-    gst_object_unref(aqueue_src_pad);
-    gst_object_unref(mux_audio_pad);
-    if (ret != GST_PAD_LINK_OK) {
-        printf("failed to connect internal queue to flvmux\n");
-        return false;
-    }
-
+    audio_ = audio;
     return true;
 }
-*/
 
 bool MediaOutput::syncState() {
     return gst_element_sync_state_with_parent(output_bin_);

@@ -29,8 +29,7 @@ struct MediaStream {
     bool create(const StreamSettings& settings);
     bool update(const StreamSettings& settings);
     bool addVideo(const VideoSettings& settings);
-    //bool addAudio(const AudioSettings& settings);
-    //bool IsSourcesEmpty();
+    bool addAudio(const AudioSettings& settings);
     bool addOutput(const std::string& id, const OutputSettings& settings);
     bool removeVideo();
     bool removeAudio();

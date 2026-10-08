@@ -20,11 +20,11 @@ class VideoPreview {
     void destroy();
     static GstPadProbeReturn unlink_cb(GstPad* pad, GstPadProbeInfo*, gpointer user_data);
     void unlink();
-
-    static GstFlowReturn onPreviewFrame(GstElement* sink, gpointer user_data);
 public:
     VideoPreview(MediaPipeline* pipeline);
     ~VideoPreview();
     bool create(GstDevice* device, std::shared_ptr<VideoPreviewBuffer>& buffer);
+
+    static GstFlowReturn onPreviewFrame(GstElement* sink, gpointer user_data);
 };
  

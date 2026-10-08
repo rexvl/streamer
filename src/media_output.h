@@ -8,6 +8,7 @@
 #include <media_pipeline.h>
 
 class VideoSource;
+class AudioSource;
 
 class MediaOutput {
     GstElement* stream_bin_;
@@ -17,9 +18,13 @@ class MediaOutput {
     GstPad* sink_ghost_{ nullptr };
     GstPad* video_tee_pad_{ nullptr };
     GstElement* vqueue_{ nullptr };
+    GstPad* audio_sink_ghost_{ nullptr };
+    GstPad* audio_tee_pad_{ nullptr };
+    GstElement* aqueue_{ nullptr };
     std::mutex mutex_;
     std::condition_variable cv_;
     VideoSource* video_{nullptr};
+    AudioSource* audio_{nullptr};
 
     void unlink();
 public:
@@ -29,7 +34,7 @@ public:
     bool create();
 
     bool addVideo(VideoSource* video);
-    //bool addAudio(GstElement* audio_tee);
+    bool addAudio(AudioSource* audio);
     bool syncState();
 
     GstElement* getElement() const;

@@ -10,6 +10,7 @@ class MediaCapture {
     GstElement* bin_{nullptr};
     GstElement* tee_{nullptr};
 
+
     GstPad* getNextSrcPad();
 public:
     MediaCapture(MediaPipeline* pipeline);

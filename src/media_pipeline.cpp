@@ -70,7 +70,7 @@ std::shared_ptr<MediaCapture> MediaPipeline::ensureVideoCapture(GstDevice* devic
     return video;
 }
 
-std::shared_ptr<MediaCapture> MediaPipeline::getAudioCapture(GstDevice* device) {
+std::shared_ptr<MediaCapture> MediaPipeline::ensureAudioCapture(GstDevice* device) {
     auto it = audio_captures_.find(device);
     if (it != audio_captures_.end()) {
         auto audio = it->second.lock();
@@ -90,6 +90,10 @@ std::shared_ptr<MediaCapture> MediaPipeline::getAudioCapture(GstDevice* device) 
 
     audio_captures_[device] = audio;
     return audio;
+}
+
+std::shared_ptr<MediaCapture> MediaPipeline::getAudioCapture(GstDevice* device) {
+    return ensureAudioCapture(device);
 }
 
 
@@ -140,13 +144,14 @@ bool MediaPipeline::ProcessMessage() {
             &pending);
 
         GstObject* obj = GST_MESSAGE_SRC(msg);
+/*
         g_print("%s (%s): %s -> %s (pending: %s)\n",
             GST_OBJECT_NAME(obj),
             G_OBJECT_TYPE_NAME(obj),
             gst_element_state_get_name(old_state),
             gst_element_state_get_name(new_state),
             gst_element_state_get_name(pending));
-
+*/
 
         if (obj == GST_OBJECT(pipeline_)) {
             if (state_ == GST_STATE_PLAYING && new_state != GST_STATE_PLAYING) {
@@ -207,6 +212,14 @@ bool MediaPipeline::syncStreams(std::map<std::string, StreamSettings>& new_strea
     for (auto it = video_captures_.begin(); it != video_captures_.end(); ) {
         if (it->second.expired()) {
             it = video_captures_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    for (auto it = audio_captures_.begin(); it != audio_captures_.end(); ) {
+        if (it->second.expired()) {
+            it = audio_captures_.erase(it);
         } else {
             ++it;
         }

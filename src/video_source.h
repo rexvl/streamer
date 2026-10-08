@@ -17,12 +17,7 @@ class VideoSource {
     GstPad* ghost_pad_{ nullptr };
     GstPad* src_pad_{ nullptr };
 
-    std::mutex mutex_;
-    std::condition_variable unlink_cv_;
-
     void destroy();
-    static GstPadProbeReturn unlink_cb(GstPad* pad, GstPadProbeInfo*, gpointer user_data);
-    void unlink();
     static GstElement* createEncoder(const VideoSettings& settings);
 public:
     VideoSource(GstElement* stream_bin, const VideoSettings& settings);

@@ -154,6 +154,12 @@ void ConfigManager::load() {
             const uint64_t device_index = ensureDeviceIndex(dev_id);
             s_json["video"]["device"] = device_index;
         }
+
+        if (s_json.contains("audio") && s_json["audio"].contains("device")) {
+            const std::string dev_id = s_json["audio"]["device"].get<std::string>();
+            const uint64_t device_index = ensureDeviceIndex(dev_id);
+            s_json["audio"]["device"] = device_index;
+        }
     }
 
     {

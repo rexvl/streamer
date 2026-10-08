@@ -37,6 +37,7 @@ public:
     GstElement* createChildBin();
 
     std::shared_ptr<MediaCapture> ensureVideoCapture(GstDevice* device);
+    std::shared_ptr<MediaCapture> ensureAudioCapture(GstDevice* device);
     std::shared_ptr<MediaCapture> getAudioCapture(GstDevice* device);
 
     bool ProcessMessage();

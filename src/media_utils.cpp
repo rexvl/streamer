@@ -7,9 +7,12 @@ GstPad* add_ghost_pad(GstElement* bin, GstElement* element, const gchar* src_pad
     }
 
     GstPad* ghost_pad = gst_ghost_pad_new(ghost_pad_name, src_pad);
+    gst_object_unref(src_pad);
     if (!ghost_pad) {
         return false;
     }
+
+    gst_pad_set_active(ghost_pad, TRUE);
 
     if (!gst_element_add_pad(bin, ghost_pad)) {
         return false;

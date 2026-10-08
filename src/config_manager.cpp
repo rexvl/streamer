@@ -472,6 +472,13 @@ std::shared_ptr<VideoPreviewBuffer> ConfigManager::getVideoPreviewBuffer(const u
 }
 
 std::shared_ptr<AudioPreviewBuffer> ConfigManager::getAudioPreviewBuffer(const uint64_t cam_id) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+
+    auto it = audio_devices_.find(cam_id);
+    if (it != audio_devices_.end()) {
+        return it->second->buffer;
+    }
+
     return std::shared_ptr<AudioPreviewBuffer>();
 }
 

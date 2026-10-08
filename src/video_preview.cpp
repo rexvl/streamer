@@ -50,12 +50,12 @@ bool VideoPreview::create(GstDevice* device, std::shared_ptr<VideoPreviewBuffer>
         return false;
     }
     g_object_set(queue, "leaky", 1, "max-size-buffers", 2, nullptr);
-/*
+
     GstElement* videorate = gst_element_factory_make("videorate", NULL);
     if (!videorate) {
         return false;
     }
-*/
+
     GstElement* videoconvert = gst_element_factory_make("videoconvert", NULL);
     if (!videoconvert) {
         return false;
@@ -76,7 +76,7 @@ bool VideoPreview::create(GstDevice* device, std::shared_ptr<VideoPreviewBuffer>
         "format", G_TYPE_STRING, "I420",
         "width", G_TYPE_INT, 320,
         "height", G_TYPE_INT, 240,
-        //"framerate", GST_TYPE_FRACTION, 10, 1,
+        "framerate", GST_TYPE_FRACTION, 10, 1,
         nullptr
     );
 
@@ -109,9 +109,9 @@ bool VideoPreview::create(GstDevice* device, std::shared_ptr<VideoPreviewBuffer>
     callbacks.new_sample = onPreviewFrameCallback;
     gst_app_sink_set_callbacks(GST_APP_SINK(appsink), &callbacks, this, nullptr);
 
-    gst_bin_add_many(GST_BIN(bin_), queue, videoconvert, videoscale, capsfilter, enc, appsink, NULL);
+    gst_bin_add_many(GST_BIN(bin_), queue, videorate, videoconvert, videoscale, capsfilter, enc, appsink, NULL);
 
-    if (!gst_element_link_many(queue, videoconvert, videoscale, capsfilter, enc, appsink, NULL)) {
+    if (!gst_element_link_many(queue, videorate, videoconvert, videoscale, capsfilter, enc, appsink, NULL)) {
         printf("VideoPreview::create: failed to link internal elements\n");
         return false;
     }
@@ -150,7 +150,6 @@ bool VideoPreview::create(GstDevice* device, std::shared_ptr<VideoPreviewBuffer>
     return true;
 }
 
-
 void VideoPreview::destroy() {
     if (!bin_) {
         return;
@@ -172,48 +171,4 @@ void VideoPreview::destroy() {
     gst_element_set_state(bin_, GST_STATE_NULL);
     gst_bin_remove(GST_BIN(pipeline_->getElement()), bin_);
     bin_ = nullptr;
-}
-
-/*
-void VideoPreview::destroy() {
-    if (!bin_) {
-        return;
-    }
-
-    auto probe_id = gst_pad_add_probe(
-        src_pad_,
-        GST_PAD_PROBE_TYPE_IDLE,
-        unlink_cb, this, NULL);
-
-    if (probe_id) {
-        std::unique_lock<std::mutex> lk(mutex_);
-        unlink_cv_.wait(lk, [this]() {
-            return !bin_;
-        });
-    }
-
-    capture_->removeSrcPad(src_pad_);
-    capture_.reset();
-    src_pad_ = 0;
-}
-*/
-
-GstPadProbeReturn VideoPreview::unlink_cb(GstPad* pad, GstPadProbeInfo*, gpointer user_data) {
-    auto* self = static_cast<VideoPreview*>(user_data);
-    self->unlink();
-    return GST_PAD_PROBE_REMOVE;
-}
-
-void VideoPreview::unlink() {
-    auto ret = gst_pad_unlink(src_pad_, ghost_pad_);
-
-    gst_element_set_state(bin_, GST_STATE_NULL);
-    gst_bin_remove(GST_BIN(pipeline_->getElement()), bin_);
-
-    {
-        std::scoped_lock<std::mutex> lk(mutex_);
-        bin_ = nullptr;
-    }
-
-    unlink_cv_.notify_one();
 }

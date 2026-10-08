@@ -6,9 +6,11 @@
 #include <config_manager.h>
 #include <media_capture.h>
 #include <video_preview.h>
+#include <audio_preview.h>
 
 class MediaStream;
 class VideoPreview;
+class AudioPreview;
 
 class MediaPipeline {
     GstElement* pipeline_{ nullptr };
@@ -26,7 +28,7 @@ class MediaPipeline {
     std::map<std::string, std::unique_ptr<MediaStream>> streams_;
 
     std::map<GstDevice*, std::shared_ptr<VideoPreview>> video_previews_;
-    //std::map<GstDevice*, std::shared_ptr<MediaCapture>> audio_previews_;
+    std::map<GstDevice*, std::shared_ptr<AudioPreview>> audio_previews_;
 public:
     MediaPipeline();
     ~MediaPipeline();
@@ -47,4 +49,5 @@ public:
     bool syncStreams(std::map<std::string, StreamSettings>& streams);
 
     void syncVideoPreviews(std::map<GstDevice*, std::shared_ptr<VideoPreviewBuffer>>& video_previews);
+    void syncAudioPreviews(std::map<GstDevice*, std::shared_ptr<AudioPreviewBuffer>>& audio_previews);
 };

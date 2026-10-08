@@ -18,16 +18,19 @@ class HttpServer : public PreviewUpdateListener {
 
     struct AudioLevelWebsocket {
         std::shared_ptr<AudioPreviewBuffer> buffer_;
-        double level_{ 0.0 };
+        double level_{ -60.0 };
 
         bool update() {
-/*
-            double new_level = preview_->getAudioLevel();
-            if (std::abs(new_level - level_) >= 10.0) {
+            if (!buffer_) {
+                return false;
+            }
+
+            double new_level = buffer_->getAudioLevel();
+            if (new_level != level_) {
                 level_ = new_level;
                 return true;
             }
-*/
+
             return false;
         }
 

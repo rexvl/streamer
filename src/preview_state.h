@@ -113,8 +113,23 @@ public:
 };
 
 class AudioPreviewBuffer : public BasePreviewBuffer {
+    std::atomic<double> level_{ -60.0 };
+
 public:
     AudioPreviewBuffer(PreviewUpdateListener* listener, std::atomic<uint64_t>& previews_version) :
         BasePreviewBuffer(listener, previews_version) {
+    }
+
+    void setLevel(double level) {
+        double current = level_.load(std::memory_order_relaxed);
+        // Update if difference exceeds 10% of scale (-60 to 0 dB, i.e. 6 dB)
+        if (std::abs(level - current) >= 6.0) {
+            level_.store(level, std::memory_order_relaxed);
+            notifyPreviewUpdate();
+        }
+    }
+
+    double getAudioLevel() const {
+        return level_.load(std::memory_order_relaxed);
     }
 };

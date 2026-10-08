@@ -64,6 +64,7 @@ int main() {
         std::map<GstDevice*, std::shared_ptr<AudioPreviewBuffer>> audio_previews;
         if (ConfigManager::getInstance().getActivePreviews(video_previews, audio_previews, last_previews_version)) {
             pipeline->syncVideoPreviews(video_previews);
+            pipeline->syncAudioPreviews(audio_previews);
         }
 
         const auto cur_time = std::chrono::steady_clock::now();

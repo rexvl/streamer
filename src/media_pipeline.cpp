@@ -253,3 +253,29 @@ void MediaPipeline::syncVideoPreviews(std::map<GstDevice*, std::shared_ptr<Video
         video_previews_[device] = video_preview;
     }
 }
+
+void MediaPipeline::syncAudioPreviews(std::map<GstDevice*, std::shared_ptr<AudioPreviewBuffer>>& active_previews) {
+    auto it = audio_previews_.begin();
+    while (it != audio_previews_.end()) {
+        auto ap_it = active_previews.find(it->first);
+        if (ap_it == active_previews.end()) {
+            it = audio_previews_.erase(it);
+        } else {
+            it++;
+        }
+    }
+
+    for (auto& [device, buffer] : active_previews) {
+        auto ap_it = audio_previews_.find(device);
+        if (ap_it != audio_previews_.end()) {
+            continue; // already started
+        }
+
+        auto audio_preview = std::make_shared<AudioPreview>(this);
+        if (!audio_preview->create(device, buffer)) {
+            continue;
+        }
+
+        audio_previews_[device] = audio_preview;
+    }
+}
